@@ -1,0 +1,52 @@
+# ============================================================
+# Pipeline Configuration
+# All GCP and pipeline settings live here.
+# You will fill in your own values for project_id, bucket, etc.
+# ============================================================
+
+gcp:
+  project_id: "your-gcp-project-id"         # e.g. "my-ml-project-123"
+  region: "us-central1"                       # Vertex AI region
+  artifact_bucket: "gs://your-bucket-name"   # GCS bucket for pipeline artifacts
+
+pipeline:
+  name: "forecasting-pipeline"
+  description: "End-to-end forecasting MLOps pipeline"
+  # Where compiled pipeline JSON will be saved
+  compiled_pipeline_path: "pipelines/compiled/forecasting_pipeline.json"
+
+data:
+  # Where raw data lives — could be a GCS path or BigQuery table
+  # Option A: GCS
+  raw_data_path: "gs://your-bucket-name/data/raw/"
+  processed_data_path: "gs://your-bucket-name/data/processed/"
+  # Option B: BigQuery (uncomment if using BQ)
+  # bq_dataset: "your_dataset"
+  # bq_table: "your_table"
+  # bq_project: "your-gcp-project-id"
+
+  # How much history to pull (for forecasting)
+  lookback_days: 365
+  # Forecast horizon
+  forecast_horizon: 30
+
+training:
+  # Vertex AI training machine type
+  machine_type: "n1-standard-4"
+  # Container image used for training component
+  # Start with a pre-built image; build a custom one later
+  base_image: "us-docker.pkg.dev/vertex-ai/training/scikit-learn-cpu.1-0:latest"
+  # Hyperparameters — add yours here
+  hyperparameters:
+    n_estimators: 100
+    max_depth: 6
+    learning_rate: 0.1
+
+model:
+  # Name in Vertex AI Model Registry
+  display_name: "forecasting-model"
+  serving_container: "us-docker.pkg.dev/vertex-ai/prediction/sklearn-cpu.1-0:latest"
+
+experiment:
+  # Vertex AI Experiments for tracking runs
+  name: "forecasting-experiments"

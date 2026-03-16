@@ -1,0 +1,24 @@
+# Core KFP + Vertex AI
+kfp==1.8.22                       # Kubeflow Pipelines SDK (v1 API, compatible with Vertex AI)
+google-cloud-aiplatform>=1.38.0   # Vertex AI Python SDK
+google-cloud-bigquery>=3.0.0      # If using BigQuery as data source
+google-cloud-storage>=2.0.0       # GCS operations
+
+# Data / ML
+pandas>=2.0.0
+numpy>=1.24.0
+pyarrow>=12.0.0                   # Parquet support
+scikit-learn>=1.3.0
+joblib>=1.3.0
+
+# Configuration
+pyyaml>=6.0
+
+# Development / testing
+pytest>=7.0.0
+jupyter>=1.0.0
+ipykernel>=6.0.0
+
+# Optional: if you use LightGBM or XGBoost (recommended for forecasting)
+# lightgbm>=4.0.0
+# xgboost>=1.7.0
