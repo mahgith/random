@@ -1,0 +1,78 @@
+# General data
+infra:
+  project_id: forecast-sales-poc
+  location: europe-west9
+  bucket_name: forecast-sales-bucket-poc
+
+# Ingest of shipments
+params_ingestion_shipments:
+  dataset: forecast_sales_bronze
+  table_id: shipments_raw
+  file_name: shipments_raw.csv
+  schema_fields:
+    - name: shipment_id
+      type: STRING
+    - name: origin_city
+      type: STRING
+    - name: origin_country
+      type: STRING
+    - name: destination_city
+      type: STRING
+    - name: destination_country
+      type: STRING
+    - name: carrier
+      type: STRING
+    - name: distance_km
+      type: FLOAT
+    - name: weight_kg
+      type: STRING
+    - name: pickup_timestamp
+      type: TIMESTAMP
+    - name: weather_severity
+      type: FLOAT
+    - name: traffic_density
+      type: FLOAT
+    - name: is_international
+      type: BOOLEAN
+    - name: planned_duration_hrs
+      type: FLOAT
+    - name: actual_duration_hrs
+      type: FLOAT
+    - name: late_delivery
+      type: INTEGER
+
+# Ingest of events
+params_ingestion_events:
+  dataset: forecast_sales_bronze
+  table_id: events_raw
+  file_name: events_raw.csv
+  schema_fields:
+    - name: event_id
+      type: STRING      
+    - name: shipment_id
+      type: STRING         
+    - name: event_type
+      type: STRING   
+    - name: timestamp
+      type: TIMESTAMP   
+    - name: location
+      type: STRING                     
+
+# Clean and Merge Data
+params_clean_and_merge_tables:
+  bronze_dataset: forecast_sales_bronze
+  silver_dataset: forecast_sales_silver
+  shipments_table: shipments_raw
+  events_table: events_raw
+ 
+# Build training dataset
+params_build_training_dataset:
+    risk_threshold: 0.75
+    gold_dataset: forecast_sales_gold
+
+# Training model
+params_train_xgboost_model:
+  n_estimators: 100
+  learning_rate: 0.1
+  max_depth: 6
+
