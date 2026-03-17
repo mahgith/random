@@ -1,0 +1,70 @@
+# ============================================================
+# INBOUND — Pipeline Parameters v1
+# Fill in PLACEHOLDER values once you have the real names.
+# ============================================================
+
+infra:
+  project_id: "your-gcp-project-id"
+  region: "europe-west1"
+  artifact_bucket: "gs://your-bucket-name"
+
+  # Docker image URIs — update after building with docker/forecasting/Makefile
+  forecasting_image: "europe-west1-docker.pkg.dev/your-gcp-project-id/ml-images/forecasting:latest"
+  serving_image:     "europe-west1-docker.pkg.dev/your-gcp-project-id/ml-images/serving:latest"
+
+# ── BigQuery source tables ────────────────────────────────────────────────────
+bq_tables:
+  - dataset: "PLACEHOLDER_INBOUND_DATASET"
+    table:   "PLACEHOLDER_INBOUND_TABLE_1"    # NTW-23280
+  - dataset: "PLACEHOLDER_INBOUND_DATASET"
+    table:   "PLACEHOLDER_INBOUND_TABLE_2"    # NTW-23287
+  - dataset: "PLACEHOLDER_INBOUND_DATASET"
+    table:   "PLACEHOLDER_INBOUND_TABLE_3"    # NTW-26134
+
+# ── BQ column names ───────────────────────────────────────────────────────────
+bq_columns:
+  package_id:    "PLACEHOLDER_COL_package_id"
+  scan_timestamp: "PLACEHOLDER_COL_scan_timestamp"
+  packing_units: "PLACEHOLDER_COL_packing_units"
+
+# ── Training hyperparameter grid ──────────────────────────────────────────────
+# Each entry is a list; all combinations will be evaluated.
+# Vertex AI Experiments tracks every run so you can compare them in the console.
+params_training:
+  lookback_days: 90
+  half_life_days: 30
+  hp_grid:
+    prophet_changepoint_prior_scale: [0.05, 0.1, 0.3]
+    lgbm_n_estimators: [800, 1200]
+    lgbm_learning_rate: [0.05, 0.1]
+    lgbm_num_leaves: [31, 63]
+  # Number of backtest cutoffs to use inside each HP tuning fold
+  # (fewer = faster tuning; more = more reliable WAPE estimate)
+  tuning_num_cutoffs: 4
+  experiment_name: "package-volume-inbound-experiments"
+  run_prefix: "inbound-tuning"
+
+# ── Evaluation (rolling backtest) ─────────────────────────────────────────────
+params_evaluation:
+  forecast_horizon: 28
+  evaluation_start_date: "2024-07-01"
+  backtest_step_days: 7
+  # Primary gate metric — pipeline stops here if these are exceeded
+  max_allowed_mape: 0.20
+  max_allowed_wape: 0.20   # WAPE added; used as primary champion metric
+
+# ── Champion vs Challenger gate ───────────────────────────────────────────────
+params_champion_vs_challenger:
+  model_display_name: "package-volume-inbound"
+  champion_label_env: "prod"
+  champion_label_role: "champion"
+  # Challenger must beat champion WAPE by at least max(delta_abs, delta_rel × champion_wape)
+  delta_rel: 0.03    # 3 % relative improvement required
+  delta_abs: 0.005   # minimum 0.5 pp absolute improvement
+
+# ── Model registration ────────────────────────────────────────────────────────
+params_register:
+  model_display_name: "package-volume-inbound"
+  champion_label_env: "prod"
+  champion_label_role: "champion"
+  archived_label_role: "archived"

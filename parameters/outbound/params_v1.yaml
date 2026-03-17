@@ -1,0 +1,65 @@
+# ============================================================
+# OUTBOUND — Pipeline Parameters v1
+# Fill in PLACEHOLDER values once you have the real names.
+# ============================================================
+
+infra:
+  project_id: "your-gcp-project-id"
+  region: "europe-west1"
+  artifact_bucket: "gs://your-bucket-name"
+
+  # Docker image URIs — update after building with docker/forecasting/Makefile
+  forecasting_image: "europe-west1-docker.pkg.dev/your-gcp-project-id/ml-images/forecasting:latest"
+  serving_image:     "europe-west1-docker.pkg.dev/your-gcp-project-id/ml-images/serving:latest"
+
+# ── BigQuery source tables ────────────────────────────────────────────────────
+# Two sources: recent data (>= date_from) and historical (< date_from)
+bq_tables:
+  - dataset: "PLACEHOLDER_OUTBOUND_DATASET"
+    table:   "PLACEHOLDER_OUTBOUND_RECENT_TABLE"      # NTW-21533
+    date_from: "2024-06-10"
+  - dataset: "PLACEHOLDER_OUTBOUND_DATASET"
+    table:   "PLACEHOLDER_OUTBOUND_HISTORICAL_TABLE"  # NTW-18703
+    date_to:   "2024-06-09"
+
+# ── BQ column names ───────────────────────────────────────────────────────────
+bq_columns:
+  package_id:    "PLACEHOLDER_COL_package_id"
+  scan_timestamp: "PLACEHOLDER_COL_scan_timestamp"
+  packing_units: "PLACEHOLDER_COL_packing_units"
+
+# ── Training hyperparameter grid ──────────────────────────────────────────────
+params_training:
+  lookback_days: 30
+  half_life_days: 10
+  hp_grid:
+    prophet_changepoint_prior_scale: [0.3, 0.7, 1.0]   # outbound is spikier
+    lgbm_n_estimators: [800, 1200]
+    lgbm_learning_rate: [0.05, 0.1]
+    lgbm_num_leaves: [31, 63]
+  tuning_num_cutoffs: 4
+  experiment_name: "package-volume-outbound-experiments"
+  run_prefix: "outbound-tuning"
+
+# ── Evaluation ────────────────────────────────────────────────────────────────
+params_evaluation:
+  forecast_horizon: 28
+  evaluation_start_date: "2024-07-01"
+  backtest_step_days: 7
+  max_allowed_mape: 0.20
+  max_allowed_wape: 0.20
+
+# ── Champion vs Challenger gate ───────────────────────────────────────────────
+params_champion_vs_challenger:
+  model_display_name: "package-volume-outbound"
+  champion_label_env: "prod"
+  champion_label_role: "champion"
+  delta_rel: 0.03
+  delta_abs: 0.005
+
+# ── Model registration ────────────────────────────────────────────────────────
+params_register:
+  model_display_name: "package-volume-outbound"
+  champion_label_env: "prod"
+  champion_label_role: "champion"
+  archived_label_role: "archived"

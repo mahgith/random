@@ -10,11 +10,10 @@ Usage:
     python scripts/run_pipeline.py --direction inbound --dry-run
 
 Prerequisites:
-    1. Fill in configs/pipeline_config.yaml:
-       - gcp.project_id, gcp.artifact_bucket
-       - directions.inbound.bq_tables  (replace PLACEHOLDER values)
-       - directions.inbound.bq_columns (replace PLACEHOLDER values)
-       - same for outbound
+    1. Fill in parameters/inbound/params_v1.yaml and parameters/outbound/params_v1.yaml:
+       - infra.project_id, infra.artifact_bucket
+       - bq_tables  (replace PLACEHOLDER dataset/table values)
+       - bq_columns (replace PLACEHOLDER column name values)
     2. Authenticate:  gcloud auth application-default login
     3. Dependencies:  pip install -r requirements.txt
     4. Enable APIs:
@@ -49,20 +48,19 @@ def submit_pipeline(compiled_path: str, direction: str) -> None:
     params = build_pipeline_params(direction)
 
     aiplatform.init(
-        project=settings.PROJECT_ID,
-        location=settings.REGION,
-        staging_bucket=settings.ARTIFACT_BUCKET,
-        experiment=settings.EXPERIMENT_NAME,
+        project=params["project_id"],
+        location=params["region"],
+        staging_bucket=params["artifact_bucket"],
     )
 
     timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
     job_display_name = f"{settings.PIPELINE_NAME}-{direction}-{timestamp}"
 
     print(f"[→] Submitting: {job_display_name}")
-    print(f"    Project:    {settings.PROJECT_ID}")
-    print(f"    Region:     {settings.REGION}")
+    print(f"    Project:    {params['project_id']}")
+    print(f"    Region:     {params['region']}")
     print(f"    Direction:  {direction}")
-    print(f"    Bucket:     {settings.ARTIFACT_BUCKET}")
+    print(f"    Bucket:     {params['artifact_bucket']}")
 
     job = aiplatform.PipelineJob(
         display_name=job_display_name,
@@ -76,7 +74,7 @@ def submit_pipeline(compiled_path: str, direction: str) -> None:
 
     console_url = (
         f"https://console.cloud.google.com/vertex-ai/pipelines/runs"
-        f"?project={settings.PROJECT_ID}"
+        f"?project={params['project_id']}"
     )
     print(f"\n[✓] Pipeline submitted!")
     print(f"    Monitor at: {console_url}")
@@ -115,7 +113,7 @@ def main():
         params = build_pipeline_params(args.direction)
         print(f"=== DRY RUN — {args.direction} ===")
         print(json.dumps(params, indent=2))
-        print("\nUpdate configs/pipeline_config.yaml to change these values.")
+        print(f"\nUpdate parameters/{args.direction}/params_v1.yaml to change these values.")
         return
 
     compile_pipeline(args.output_path)
