@@ -1,17 +1,15 @@
 """
 PREPROCESSING COMPONENT
 =======================
-Responsibility: Transform raw data into model-ready features.
+Adds calendar features, French public-holiday flags, and rolling
+statistics to the raw daily time series produced by data_ingestion_op.
 
-What goes here (from your notebook):
-  - Feature engineering
-  - Handling missing values
-  - Creating lag features, rolling windows, calendar features (common in forecasting)
-  - Train/test split
-  - Saving a fitted scaler/encoder if needed (save it as an artifact too)
+This matches the feature engineering cells in modeling_inbound.ipynb /
+modeling_outbound.ipynb.
 
-Input:  raw_dataset   — the GCS artifact written by data_ingestion_op
-Output: train_dataset, test_dataset — split and feature-engineered data
+Input:  raw_dataset   — daily workday series [ds, y]
+Output: processed_data — enriched DataFrame with all features used by training
+        and evaluation components
 """
 
 from kfp.v2.dsl import component, Input, Output, Dataset
@@ -19,72 +17,87 @@ from kfp.v2.dsl import component, Input, Output, Dataset
 
 @component(
     packages_to_install=[
-        "pandas",
+        "pandas>=2.0.0",
         "pyarrow",
-        "scikit-learn",
-        "numpy",
+        "numpy>=1.24.0",
+        "holidays>=0.46",
     ],
     base_image="python:3.10-slim",
 )
 def preprocessing_op(
-    # ── Inputs ────────────────────────────────────────────────────────────────
-    raw_dataset: Input[Dataset],          # comes from data_ingestion_op
-    forecast_horizon: int = 30,
-    test_size_fraction: float = 0.2,
-
-    # ── Outputs ───────────────────────────────────────────────────────────────
-    train_dataset: Output[Dataset] = None,    # type: ignore[assignment]
-    test_dataset: Output[Dataset] = None,     # type: ignore[assignment]
+    direction: str,                # "inbound" or "outbound" — used only for logging
+    raw_dataset: Input[Dataset],
+    processed_data: Output[Dataset] = None,  # type: ignore[assignment]
 ):
-    """Engineer features and split into train/test sets."""
-    import pandas as pd
-    import numpy as np
+    """Add calendar, holiday, and rolling features to the daily time series."""
     import logging
+    import numpy as np
+    import pandas as pd
+    import holidays as hol_lib
 
     logging.basicConfig(level=logging.INFO)
     log = logging.getLogger(__name__)
 
-    # ── Load raw data ─────────────────────────────────────────────────────────
+    # ── Load ──────────────────────────────────────────────────────────────────
     df = pd.read_parquet(raw_dataset.path + ".parquet")
-    log.info(f"Loaded raw data: {df.shape}")
+    df["ds"] = pd.to_datetime(df["ds"])
+    df = df.sort_values("ds").reset_index(drop=True)
+    log.info(f"[{direction}] Loaded {len(df)} workdays")
 
-    # ── Feature engineering ───────────────────────────────────────────────────
-    # This is where you paste your notebook's feature engineering code.
-    # Below is a generic forecasting example — replace with your logic.
+    # ── French public holidays ────────────────────────────────────────────────
+    years = df["ds"].dt.year.unique().tolist()
+    fr_holidays = set()
+    for yr in years:
+        fr_holidays.update(hol_lib.France(years=yr).keys())
 
-    df = df.sort_values("date").reset_index(drop=True)
-    df["date"] = pd.to_datetime(df["date"])
+    holiday_dates = pd.to_datetime(sorted(fr_holidays))
 
-    # --- Calendar features (common for forecasting) ---
-    df["day_of_week"] = df["date"].dt.dayofweek
-    df["month"] = df["date"].dt.month
-    df["day_of_year"] = df["date"].dt.dayofyear
-    df["week_of_year"] = df["date"].dt.isocalendar().week.astype(int)
+    df["is_holiday"] = df["ds"].dt.date.astype("datetime64[ns]").isin(
+        holiday_dates
+    ).astype(int)
 
-    # --- Lag features ---
-    # Rule of thumb: lags of 1, 7, 14, 30 days are a good starting point
-    for lag in [1, 7, 14, 30]:
-        df[f"lag_{lag}"] = df["value"].shift(lag)
+    # Pre/post holiday: workday immediately before/after a holiday
+    holiday_set = set(holiday_dates.normalize())
+    pre_holiday_dates  = set()
+    post_holiday_dates = set()
 
-    # --- Rolling statistics ---
-    for window in [7, 14, 30]:
-        df[f"rolling_mean_{window}"] = df["value"].shift(1).rolling(window).mean()
-        df[f"rolling_std_{window}"] = df["value"].shift(1).rolling(window).std()
+    workday_series = df["ds"].tolist()
+    workday_index  = {d: i for i, d in enumerate(workday_series)}
 
-    # Drop rows with NaN from lag features
-    df = df.dropna().reset_index(drop=True)
-    log.info(f"After feature engineering: {df.shape}, columns: {list(df.columns)}")
+    for h in holiday_set:
+        # Find the nearest workday before h
+        candidates_before = [d for d in workday_series if d < h]
+        if candidates_before:
+            pre_holiday_dates.add(max(candidates_before))
+        # Find the nearest workday after h
+        candidates_after = [d for d in workday_series if d > h]
+        if candidates_after:
+            post_holiday_dates.add(min(candidates_after))
 
-    # ── Train / Test split ────────────────────────────────────────────────────
-    # For time series: NEVER shuffle. Split chronologically.
-    split_idx = int(len(df) * (1 - test_size_fraction))
-    train_df = df.iloc[:split_idx]
-    test_df = df.iloc[split_idx:]
+    df["is_pre_holiday"]  = df["ds"].isin(pre_holiday_dates).astype(int)
+    df["is_post_holiday"] = df["ds"].isin(post_holiday_dates).astype(int)
 
-    log.info(f"Train: {len(train_df)} rows | Test: {len(test_df)} rows")
+    # ── ISO calendar features ─────────────────────────────────────────────────
+    iso = df["ds"].dt.isocalendar()
+    df["iso_year"]    = iso["year"].astype(int)
+    df["week_of_year"] = iso["week"].astype(int)
+    df["day_of_week"] = df["ds"].dt.dayofweek      # 0 = Monday
+    df["month"]       = df["ds"].dt.month
 
-    # ── Write outputs ─────────────────────────────────────────────────────────
-    train_df.to_parquet(train_dataset.path + ".parquet", index=False)
-    test_df.to_parquet(test_dataset.path + ".parquet", index=False)
+    # ── Rolling statistics (shifted by 1 to avoid leakage) ───────────────────
+    # rolling_N = mean of the preceding N workdays of y
+    for window in (10, 20, 30):
+        df[f"rolling_{window}"] = (
+            df["y"].shift(1).rolling(window, min_periods=1).mean()
+        )
 
-    log.info("Preprocessing complete.")
+    # ── Drop leading NaNs (first row has no rolling history at all) ───────────
+    # With min_periods=1 there are no NaNs, but keep a note here for clarity.
+    df = df.reset_index(drop=True)
+
+    log.info(
+        f"[{direction}] Feature columns: {list(df.columns)}  —  shape {df.shape}"
+    )
+
+    df.to_parquet(processed_data.path + ".parquet", index=False)
+    log.info(f"[{direction}] Written to {processed_data.path}.parquet")

@@ -1,29 +1,34 @@
 """
 FORECASTING PIPELINE
 ====================
-This file wires all components together into a single KFP pipeline.
-
-HOW TO READ THIS FILE
----------------------
-1. The @pipeline decorator registers the function as a KFP pipeline.
-2. Inside the function, each component is called like a normal Python function.
-3. Component outputs are passed as inputs to the next component — this is how
-   KFP knows the execution order and data flow.
-4. No actual computation happens here; this is just the graph definition.
+Wires all components into a single KFP pipeline parameterised by `direction`.
 
 PIPELINE GRAPH
 --------------
 data_ingestion
     └─► preprocessing
-            ├─► training ─► evaluation ─► model_registration
-            └─► evaluation (test_dataset)
+            └─► training ─► evaluation ─► model_registration
+
+USAGE
+-----
+Compile and run for a specific direction:
+
+    python scripts/run_pipeline.py --direction inbound
+    python scripts/run_pipeline.py --direction outbound
+
+Each direction is an independent pipeline run.  Monitoring / retraining
+one direction never touches the other.
+
+SCHEDULING
+----------
+Set up two Vertex AI Pipeline Schedules (one per direction) with the
+parameter dict from configs.settings.build_pipeline_params().
+If outbound degrades, cancel/retrigger only the outbound schedule.
 """
 
-import kfp
 from kfp.v2 import dsl
 from kfp.v2.dsl import pipeline
 
-# Import all components
 from pipelines.components.data_ingestion import data_ingestion_op
 from pipelines.components.preprocessing import preprocessing_op
 from pipelines.components.training import training_op
@@ -32,92 +37,106 @@ from pipelines.components.model_registration import model_registration_op
 
 
 @pipeline(
-    name="forecasting-pipeline",
-    description="End-to-end forecasting MLOps pipeline on Vertex AI",
+    name="package-volume-forecasting",
+    description="Inbound/outbound package volume forecasting — 7-28 day horizon",
 )
 def forecasting_pipeline(
-    # These are the pipeline-level parameters you set when you trigger a run.
-    # They flow down into individual components.
+    # ── Identity ─────────────────────────────────────────────────────────────
+    direction: str,                        # "inbound" or "outbound"
+
+    # ── GCP ──────────────────────────────────────────────────────────────────
     project_id: str,
     region: str,
     artifact_bucket: str,
-    model_display_name: str,
-    serving_container_image_uri: str,
     experiment_name: str,
-    lookback_days: int = 365,
-    forecast_horizon: int = 30,
-    test_size_fraction: float = 0.2,
-    mae_threshold: float = 10.0,
-    n_estimators: int = 100,
-    max_depth: int = 6,
-    learning_rate: float = 0.1,
+
+    # ── Data source ───────────────────────────────────────────────────────────
+    bq_tables_json: str,                   # JSON list of {dataset, table, ...}
+    bq_columns_json: str,                  # JSON dict of logical → BQ column names
+
+    # ── L1 baseline ───────────────────────────────────────────────────────────
+    lookback_days: int,
+    half_life_days: int,
+
+    # ── L2B Prophet ───────────────────────────────────────────────────────────
+    prophet_changepoint_prior_scale: float,
+
+    # ── L3 LightGBM ───────────────────────────────────────────────────────────
+    lgbm_n_estimators: int,
+    lgbm_learning_rate: float,
+    lgbm_num_leaves: int,
+
+    # ── Evaluation ────────────────────────────────────────────────────────────
+    forecast_horizon: int,
+    evaluation_start_date: str,
+    backtest_step_days: int,
+    mape_threshold: float,
+
+    # ── Registration ──────────────────────────────────────────────────────────
+    model_display_name: str,
+    serving_container_image_uri: str = "",  # leave empty until serving image ready
 ):
     # ── Step 1: Data Ingestion ────────────────────────────────────────────────
-    # Call the component function. KFP returns a "task" object.
-    # Access outputs via: ingest_task.outputs["raw_dataset"]
     ingest_task = data_ingestion_op(
+        direction=direction,
         project_id=project_id,
-        raw_data_gcs_path=f"{artifact_bucket}/data/raw/",
-        lookback_days=lookback_days,
+        bq_tables_json=bq_tables_json,
+        bq_columns_json=bq_columns_json,
     )
-    # Set the machine type for this step (optional — defaults to n1-standard-4)
-    ingest_task.set_cpu_limit("2")
-    ingest_task.set_memory_limit("8G")
+    ingest_task.set_cpu_limit("2").set_memory_limit("8G")
 
     # ── Step 2: Preprocessing ─────────────────────────────────────────────────
     preprocess_task = preprocessing_op(
+        direction=direction,
         raw_dataset=ingest_task.outputs["raw_dataset"],
-        forecast_horizon=forecast_horizon,
-        test_size_fraction=test_size_fraction,
     )
+    preprocess_task.set_cpu_limit("2").set_memory_limit("8G")
 
     # ── Step 3: Training ──────────────────────────────────────────────────────
     train_task = training_op(
-        train_dataset=preprocess_task.outputs["train_dataset"],
-        project_id=project_id,
-        experiment_name=experiment_name,
-        n_estimators=n_estimators,
-        max_depth=max_depth,
-        learning_rate=learning_rate,
+        direction=direction,
+        processed_data=preprocess_task.outputs["processed_data"],
+        lookback_days=lookback_days,
+        half_life_days=half_life_days,
+        prophet_changepoint_prior_scale=prophet_changepoint_prior_scale,
+        lgbm_n_estimators=lgbm_n_estimators,
+        lgbm_learning_rate=lgbm_learning_rate,
+        lgbm_num_leaves=lgbm_num_leaves,
     )
-    # Request more resources for training if needed
-    train_task.set_cpu_limit("4")
-    train_task.set_memory_limit("16G")
+    train_task.set_cpu_limit("8").set_memory_limit("32G")
 
     # ── Step 4: Evaluation ────────────────────────────────────────────────────
     eval_task = evaluation_op(
+        direction=direction,
+        processed_data=preprocess_task.outputs["processed_data"],
         model=train_task.outputs["model"],
-        test_dataset=preprocess_task.outputs["test_dataset"],
-        mae_threshold=mae_threshold,
+        evaluation_start_date=evaluation_start_date,
+        forecast_horizon=forecast_horizon,
+        backtest_step_days=backtest_step_days,
+        mape_threshold=mape_threshold,
     )
+    eval_task.set_cpu_limit("4").set_memory_limit("16G")
 
     # ── Step 5: Model Registration ────────────────────────────────────────────
-    # Only runs if evaluation approved the model.
-    # We pass the approval_decision file path from eval_task.
     register_task = model_registration_op(
+        direction=direction,
         model=train_task.outputs["model"],
         approval_decision_path=eval_task.outputs["approval_decision"],
         project_id=project_id,
         region=region,
         model_display_name=model_display_name,
-        serving_container_image_uri=serving_container_image_uri,
+        experiment_name=experiment_name,
         pipeline_run_name=dsl.PIPELINE_JOB_NAME_PLACEHOLDER,
+        serving_container_image_uri=serving_container_image_uri,
     )
-    # Registration only makes sense after evaluation passes
     register_task.after(eval_task)
 
 
 if __name__ == "__main__":
-    # Compile the pipeline to a JSON file that Vertex AI can execute.
-    # Run: python -m pipelines.pipeline.forecasting_pipeline
     from kfp.v2.compiler import Compiler
     import os
 
     output_path = "pipelines/compiled/forecasting_pipeline.json"
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
-
-    Compiler().compile(
-        pipeline_func=forecasting_pipeline,
-        package_path=output_path,
-    )
+    Compiler().compile(pipeline_func=forecasting_pipeline, package_path=output_path)
     print(f"Pipeline compiled to: {output_path}")

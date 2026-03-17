@@ -1,24 +1,23 @@
 """
 MODEL REGISTRATION COMPONENT
 =============================
-Responsibility: Register the approved model in Vertex AI Model Registry.
+Registers the approved model bundle in Vertex AI Model Registry.
 
-What happens here:
-  - Reads the model artifact produced by training_op
-  - Uploads it to Vertex AI Model Registry with metadata
-  - Optionally triggers deployment to a Vertex AI Endpoint
+The bundle directory (produced by training_op) contains:
+    config.json              — direction, hyperparams, training metadata
+    multiplier_table.parquet — L2A lookup
+    prophet_model.pkl        — serialised Prophet model
+    lgbm_model.joblib        — LightGBM model
+    lgbm_features.json       — L3 feature list
 
-Vertex AI Model Registry is the central store for your models.
-From there you can deploy to online endpoints (real-time prediction)
-or batch prediction jobs.
+Vertex AI stores the entire bundle as a single Model artifact.
+There is no built-in serving container that handles Prophet + LightGBM
+together, so we register with a custom container placeholder.
+Replace `custom_serving_image_uri` with your actual serving image once built.
 
-IMPORTANT — Serving Container
-------------------------------
-The serving_container_image_uri must match your model type:
-  sklearn:  us-docker.pkg.dev/vertex-ai/prediction/sklearn-cpu.1-0:latest
-  xgboost:  us-docker.pkg.dev/vertex-ai/prediction/xgboost-cpu.1-6:latest
-  lightgbm: us-docker.pkg.dev/vertex-ai/prediction/lightgbm-cpu.3-3:latest
-  custom:   Your own container (needed for complex pre/post processing)
+If no serving container is needed yet (batch-only), leave
+`serving_container_image_uri` empty — registration still works for
+offline use (Vertex AI Batch Prediction).
 """
 
 from kfp.v2.dsl import component, Input, Output, Model
@@ -26,24 +25,23 @@ from kfp.v2.dsl import component, Input, Output, Model
 
 @component(
     packages_to_install=[
-        "google-cloud-aiplatform",
+        "google-cloud-aiplatform>=1.38.0",
     ],
     base_image="python:3.10-slim",
 )
 def model_registration_op(
-    # ── Inputs ────────────────────────────────────────────────────────────────
+    direction: str,
     model: Input[Model],
-    approval_decision_path: str,          # path to the approval_decision file
+    approval_decision_path: str,
     project_id: str,
     region: str,
     model_display_name: str,
-    serving_container_image_uri: str,
-    pipeline_run_name: str = "",          # injected by the pipeline for traceability
-
-    # ── Outputs ───────────────────────────────────────────────────────────────
+    experiment_name: str,
+    pipeline_run_name: str = "",
+    serving_container_image_uri: str = "",   # leave empty until serving image is ready
     registered_model_resource_name: Output[str] = None,   # type: ignore[assignment]
 ):
-    """Register the model in Vertex AI Model Registry if approved."""
+    """Register the model bundle in Vertex AI Model Registry if approved."""
     import logging
     from google.cloud import aiplatform
 
@@ -55,45 +53,47 @@ def model_registration_op(
         decision = f.read().strip()
 
     if decision != "approved":
-        log.warning(f"Model was NOT approved (decision='{decision}'). Skipping registration.")
-        # Write empty output so downstream steps don't fail
+        log.warning(
+            f"[{direction}] Model NOT approved (decision='{decision}'). "
+            "Skipping registration."
+        )
         with open(registered_model_resource_name.path, "w") as f:
             f.write("")
         return
 
-    # ── Register model ────────────────────────────────────────────────────────
-    log.info(f"Registering model '{model_display_name}' in Vertex AI ...")
+    # ── Register ──────────────────────────────────────────────────────────────
+    log.info(f"[{direction}] Registering '{model_display_name}' in Vertex AI ...")
     aiplatform.init(project=project_id, location=region)
 
-    uploaded_model = aiplatform.Model.upload(
+    labels = {
+        "direction":    direction,
+        "pipeline_run": pipeline_run_name.replace("/", "_")[:63],
+        "experiment":   experiment_name[:63],
+    }
+
+    upload_kwargs = dict(
         display_name=model_display_name,
-        artifact_uri=model.uri,           # GCS path of the model directory
-        serving_container_image_uri=serving_container_image_uri,
-        labels={
-            "pipeline_run": pipeline_run_name.replace("/", "_")[:63],
-            "framework": "sklearn",       # update to match your framework
-        },
+        artifact_uri=model.uri,       # GCS path of the bundle directory
+        labels=labels,
     )
 
-    resource_name = uploaded_model.resource_name
-    log.info(f"Model registered: {resource_name}")
+    if serving_container_image_uri:
+        upload_kwargs["serving_container_image_uri"] = serving_container_image_uri
+    else:
+        # No serving container — register for artifact lineage / batch use only.
+        # Vertex AI requires a container URI for online serving; skip for now.
+        log.info(
+            f"[{direction}] No serving_container_image_uri provided. "
+            "Registering bundle without serving config (batch / offline use)."
+        )
+        # Use a minimal placeholder so the API call succeeds
+        upload_kwargs["serving_container_image_uri"] = (
+            "us-docker.pkg.dev/vertex-ai/prediction/sklearn-cpu.1-3:latest"
+        )
 
-    # Write the resource name so downstream steps (e.g. deployment) can use it
+    registered = aiplatform.Model.upload(**upload_kwargs)
+    resource_name = registered.resource_name
+    log.info(f"[{direction}] Registered: {resource_name}")
+
     with open(registered_model_resource_name.path, "w") as f:
         f.write(resource_name)
-
-    # ── OPTIONAL: Deploy to endpoint ─────────────────────────────────────────
-    # Uncomment when you're ready to serve predictions.
-    #
-    # endpoint = aiplatform.Endpoint.create(
-    #     display_name=f"{model_display_name}-endpoint",
-    #     project=project_id,
-    #     location=region,
-    # )
-    # uploaded_model.deploy(
-    #     endpoint=endpoint,
-    #     machine_type="n1-standard-2",
-    #     min_replica_count=1,
-    #     max_replica_count=3,
-    # )
-    # log.info(f"Model deployed to endpoint: {endpoint.resource_name}")

@@ -1,121 +1,173 @@
 """
 DATA INGESTION COMPONENT
 ========================
-Responsibility: Pull raw data from its source and write it to GCS
-                so downstream components can read it.
+Pulls raw package scan data from BigQuery, applies the same transformations
+as the inbound.ipynb / outbound.ipynb notebooks, and writes a clean
+daily workday time series to GCS.
 
-What goes here (from your notebook):
-  - Your data loading cells (BigQuery query / GCS read / API call / etc.)
-  - Any very basic schema validation (check expected columns exist)
-  - Nothing else — no feature engineering, no cleaning
+Transformations (matching notebooks exactly):
+  1. UTC-5 h offset:  warehouse_day = floor((scan_timestamp - 5 h), 'day')
+  2. Deduplication:   keep the earliest scan per package_id
+  3. Aggregation:     sum packing_units per warehouse_day
+  4. Weekend folding: Saturday → Friday,  Sunday → Monday
+  5. Re-aggregate:    sum again in case Sat/Sun land on the same workday
+  6. Filter:          keep Mon-Fri only
 
-Output: A GCS path pointing to the raw data file (CSV or Parquet).
-        Downstream components receive this path as input.
+Output columns:  ds (date), y (float)
 
-HOW KFP OUTPUTS WORK
----------------------
-KFP components communicate by writing values to Output objects.
-  - Simple values (str, int, float): use `Output[str]` etc.
-  - Files/datasets: use `Output[Dataset]` — KFP manages the GCS URI for you.
-  - You write to `output.path`, KFP handles uploading to GCS.
+HOW TO PLUG IN YOUR BQ TABLES
+------------------------------
+Search for "PLACEHOLDER" in this file and in pipeline_config.yaml.
+Two things to replace:
+  a) Table names: bq_tables_json parameter (set in pipeline_config.yaml)
+  b) Column names: bq_columns_json parameter (set in pipeline_config.yaml)
+
+The SQL in this component uses the column names you pass via bq_columns_json,
+so you only need to update the config — not the component code.
 """
 
 from kfp.v2.dsl import component, Output, Dataset
-from kfp.v2 import dsl
 
 
-# ── Component definition ──────────────────────────────────────────────────────
-# @component turns a regular Python function into a pipeline step.
-# packages_to_install: pip packages available inside this component's container.
-# base_image: the Docker image this step runs in.
-#             Using a pre-built Vertex AI image keeps things simple at first.
 @component(
     packages_to_install=[
-        "pandas",
-        "pyarrow",          # for parquet support
-        "google-cloud-bigquery",
-        "google-cloud-storage",
-        "db-dtypes",        # needed for BQ → pandas type conversions
+        "pandas>=2.0.0",
+        "pyarrow",
+        "google-cloud-bigquery>=3.0.0",
+        "db-dtypes",
     ],
     base_image="python:3.10-slim",
 )
 def data_ingestion_op(
-    # ── Inputs ────────────────────────────────────────────────────────────────
-    # These become the parameters you pass when you call this component in the
-    # pipeline. They are plain Python types — KFP serialises them.
+    direction: str,           # "inbound" or "outbound"
     project_id: str,
-    raw_data_gcs_path: str,     # GCS URI where we will write the output
-    lookback_days: int = 365,
-
-    # ── Outputs ───────────────────────────────────────────────────────────────
-    # Output[Dataset] tells KFP "this component produces a file artifact".
-    # KFP gives you a local staging path at `raw_dataset.path`.
-    # You write your file there; KFP uploads it to GCS automatically.
+    bq_tables_json: str,      # JSON list of {dataset, table, date_from?, date_to?}
+    bq_columns_json: str,     # JSON dict mapping logical name → actual BQ column name
     raw_dataset: Output[Dataset] = None,  # type: ignore[assignment]
 ):
-    """Ingest raw data and write to GCS as parquet."""
-    import pandas as pd
+    """Ingest raw warehouse scan data from BigQuery and write clean daily series."""
+    import json
     import logging
-    from pathlib import Path
-    from datetime import datetime, timedelta
+    import pandas as pd
+    from google.cloud import bigquery
 
     logging.basicConfig(level=logging.INFO)
     log = logging.getLogger(__name__)
 
-    # ── OPTION A: Load from BigQuery ──────────────────────────────────────────
-    # Uncomment and adapt this block if your data lives in BigQuery.
-    # Replace the query with your actual SQL.
-    #
-    # from google.cloud import bigquery
-    # client = bigquery.Client(project=project_id)
-    # cutoff = (datetime.utcnow() - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
-    # query = f"""
-    #     SELECT
-    #         date,
-    #         store_id,
-    #         product_id,
-    #         sales_quantity
-    #     FROM `{project_id}.your_dataset.your_table`
-    #     WHERE date >= '{cutoff}'
-    #     ORDER BY date
-    # """
-    # log.info(f"Running BQ query (lookback={lookback_days} days) ...")
-    # df = client.query(query).to_dataframe()
+    # ── Parse parameters ─────────────────────────────────────────────────────
+    tables = json.loads(bq_tables_json)
+    cols = json.loads(bq_columns_json)
 
-    # ── OPTION B: Load from GCS ───────────────────────────────────────────────
-    # If your raw data is already in GCS as CSV/parquet, read it directly.
-    # Uncomment and adapt.
-    #
-    # from google.cloud import storage
-    # import io
-    # gcs_source = "gs://your-bucket/raw/data.csv"
-    # log.info(f"Loading data from GCS: {gcs_source}")
-    # df = pd.read_csv(gcs_source)
+    # Validate that PLACEHOLDER values have been replaced
+    for key, val in cols.items():
+        if "PLACEHOLDER" in val:
+            raise ValueError(
+                f"Column name '{key}' is still a PLACEHOLDER ('{val}'). "
+                "Update bq_columns in pipeline_config.yaml."
+            )
+    for tbl in tables:
+        for field in ("dataset", "table"):
+            if "PLACEHOLDER" in tbl.get(field, ""):
+                raise ValueError(
+                    f"BQ {field} is still a PLACEHOLDER ('{tbl[field]}'). "
+                    "Update bq_tables in pipeline_config.yaml."
+                )
 
-    # ── PLACEHOLDER — replace with Option A or B above ───────────────────────
-    # This synthetic data lets you run the pipeline end-to-end while you
-    # work on plugging in your real data source.
-    import numpy as np
-    log.info("Using synthetic placeholder data — replace with your real source!")
-    dates = pd.date_range(end=datetime.utcnow(), periods=lookback_days, freq="D")
-    df = pd.DataFrame({
-        "date": dates,
-        "value": np.random.randn(lookback_days).cumsum() + 100,  # fake time series
-    })
-    # ── END PLACEHOLDER ───────────────────────────────────────────────────────
+    col_pkg   = cols["package_id"]
+    col_ts    = cols["scan_timestamp"]
+    col_units = cols["packing_units"]
 
-    log.info(f"Loaded {len(df)} rows, columns: {list(df.columns)}")
+    # ── Build UNION ALL across source tables ─────────────────────────────────
+    # Each source table may have an optional date_from / date_to pre-filter.
+    # Filtering in SQL before UNION reduces bytes scanned.
+    union_parts = []
+    for tbl in tables:
+        filters = []
+        if tbl.get("date_from"):
+            filters.append(
+                f"DATE(TIMESTAMP_SUB({col_ts}, INTERVAL 5 HOUR)) >= '{tbl['date_from']}'"
+            )
+        if tbl.get("date_to"):
+            filters.append(
+                f"DATE(TIMESTAMP_SUB({col_ts}, INTERVAL 5 HOUR)) <= '{tbl['date_to']}'"
+            )
+        where = f"WHERE {' AND '.join(filters)}" if filters else ""
+        union_parts.append(f"""
+            SELECT
+                CAST({col_pkg}   AS STRING)  AS package_id,
+                CAST({col_ts}    AS TIMESTAMP) AS scan_timestamp,
+                CAST({col_units} AS FLOAT64) AS packing_units
+            FROM `{project_id}.{tbl['dataset']}.{tbl['table']}`
+            {where}
+        """)
 
-    # ── Validate basic schema ─────────────────────────────────────────────────
-    # Add your expected columns here so you catch data issues early.
-    required_columns = ["date", "value"]  # adjust to match your actual schema
-    missing = set(required_columns) - set(df.columns)
-    if missing:
-        raise ValueError(f"Data is missing expected columns: {missing}")
+    union_sql = "\nUNION ALL\n".join(union_parts)
 
-    # ── Write output ──────────────────────────────────────────────────────────
-    # raw_dataset.path is a local temp path. Write your file here.
-    # KFP will upload it to GCS and pass the GCS URI to downstream components.
-    output_path = raw_dataset.path + ".parquet"
-    df.to_parquet(output_path, index=False)
-    log.info(f"Wrote {len(df)} rows to {output_path}")
+    # ── Main query: offset → dedup → aggregate ────────────────────────────────
+    # Steps 1-3 happen entirely in BQ for efficiency.
+    # Weekend folding (steps 4-5) happens in pandas after the query.
+    query = f"""
+    WITH raw AS (
+        {union_sql}
+    ),
+    adjusted AS (
+        -- Step 1: UTC-5 h offset (warehouse local time)
+        SELECT
+            package_id,
+            TIMESTAMP_SUB(scan_timestamp, INTERVAL 5 HOUR) AS local_ts,
+            packing_units
+        FROM raw
+    ),
+    ranked AS (
+        -- Step 2: Rank by first scan per package (deduplication)
+        SELECT
+            package_id,
+            DATE(local_ts)  AS warehouse_day,
+            packing_units,
+            ROW_NUMBER() OVER (PARTITION BY package_id ORDER BY local_ts ASC) AS rn
+        FROM adjusted
+    ),
+    deduped AS (
+        SELECT warehouse_day, packing_units
+        FROM ranked
+        WHERE rn = 1
+    )
+    -- Step 3: Aggregate by day
+    SELECT
+        warehouse_day          AS ds,
+        SUM(packing_units)     AS y
+    FROM deduped
+    GROUP BY warehouse_day
+    ORDER BY ds
+    """
+
+    log.info(f"[{direction}] Running BQ query across {len(tables)} table(s) ...")
+    client = bigquery.Client(project=project_id)
+    df = client.query(query).to_dataframe()
+    log.info(f"[{direction}] Raw result: {len(df)} days from BQ")
+
+    df["ds"] = pd.to_datetime(df["ds"])
+    df["y"]  = df["y"].astype(float)
+
+    # ── Step 4-5: Weekend folding ─────────────────────────────────────────────
+    # Saturday (5) → Friday (-1 day)
+    # Sunday  (6) → Monday (+1 day)
+    dow = df["ds"].dt.dayofweek
+    df.loc[dow == 5, "ds"] = df.loc[dow == 5, "ds"] - pd.Timedelta(days=1)
+    df.loc[dow == 6, "ds"] = df.loc[dow == 6, "ds"] + pd.Timedelta(days=1)
+
+    # Re-aggregate: Sat and Fri (or Sun and Mon) may now be on the same date
+    df = df.groupby("ds", as_index=False)["y"].sum()
+    df = df.sort_values("ds").reset_index(drop=True)
+
+    # ── Step 6: Keep Mon-Fri only ─────────────────────────────────────────────
+    df = df[df["ds"].dt.dayofweek < 5].reset_index(drop=True)
+
+    log.info(
+        f"[{direction}] Final series: {len(df)} workdays "
+        f"from {df['ds'].min().date()} to {df['ds'].max().date()}, "
+        f"total y = {df['y'].sum():,.0f}"
+    )
+
+    df.to_parquet(raw_dataset.path + ".parquet", index=False)
+    log.info(f"[{direction}] Written to {raw_dataset.path}.parquet")

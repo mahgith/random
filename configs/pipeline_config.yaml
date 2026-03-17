@@ -1,52 +1,101 @@
 # ============================================================
 # Pipeline Configuration
-# All GCP and pipeline settings live here.
-# You will fill in your own values for project_id, bucket, etc.
+# Fill in project_id, artifact_bucket, and the BQ PLACEHOLDER
+# values once you have the table names.
 # ============================================================
 
 gcp:
-  project_id: "your-gcp-project-id"         # e.g. "my-ml-project-123"
-  region: "us-central1"                       # Vertex AI region
-  artifact_bucket: "gs://your-bucket-name"   # GCS bucket for pipeline artifacts
+  project_id: "your-gcp-project-id"
+  region: "europe-west1"          # Paris region
+  artifact_bucket: "gs://your-bucket-name"
 
 pipeline:
-  name: "forecasting-pipeline"
-  description: "End-to-end forecasting MLOps pipeline"
-  # Where compiled pipeline JSON will be saved
+  name: "package-volume-forecasting"
+  description: "Inbound/outbound package volume forecasting — 7-28 day horizon"
   compiled_pipeline_path: "pipelines/compiled/forecasting_pipeline.json"
 
-data:
-  # Where raw data lives — could be a GCS path or BigQuery table
-  # Option A: GCS
-  raw_data_path: "gs://your-bucket-name/data/raw/"
-  processed_data_path: "gs://your-bucket-name/data/processed/"
-  # Option B: BigQuery (uncomment if using BQ)
-  # bq_dataset: "your_dataset"
-  # bq_table: "your_table"
-  # bq_project: "your-gcp-project-id"
+# ── Per-direction configuration ───────────────────────────────────────────────
+# To run: python scripts/run_pipeline.py --direction inbound
+#         python scripts/run_pipeline.py --direction outbound
+#
+# Each direction has its own BQ sources and hyperparameters, but they share
+# the same pipeline code.  Scheduled runs are direction-specific, so
+# retraining/monitoring one direction never touches the other.
 
-  # How much history to pull (for forecasting)
-  lookback_days: 365
-  # Forecast horizon
-  forecast_horizon: 30
+directions:
+
+  inbound:
+    # ── BigQuery source tables ────────────────────────────────────────────────
+    # Each entry maps to one warehouse system.
+    # `date_from` / `date_to` are optional date filters (YYYY-MM-DD).
+    # Leave dataset/table as PLACEHOLDER until you have the real names.
+    bq_tables:
+      - dataset: "PLACEHOLDER_INBOUND_DATASET"
+        table:   "PLACEHOLDER_INBOUND_TABLE_1"    # NTW-23280
+      - dataset: "PLACEHOLDER_INBOUND_DATASET"
+        table:   "PLACEHOLDER_INBOUND_TABLE_2"    # NTW-23287
+      - dataset: "PLACEHOLDER_INBOUND_DATASET"
+        table:   "PLACEHOLDER_INBOUND_TABLE_3"    # NTW-26134
+
+    # ── BQ column names — fill in once you know the schema ───────────────────
+    # Search for PLACEHOLDER_COL to find these in data_ingestion.py too.
+    bq_columns:
+      package_id:    "PLACEHOLDER_COL_package_id"       # unique package identifier
+      scan_timestamp: "PLACEHOLDER_COL_scan_timestamp"  # UTC datetime of warehouse scan
+      packing_units: "PLACEHOLDER_COL_packing_units"    # quantity / number of packages
+
+    # ── Layer-1 baseline ─────────────────────────────────────────────────────
+    lookback_days: 90       # how many workdays of history to use
+    half_life_days: 30      # exponential decay half-life
+
+    # ── Layer-2B Prophet ─────────────────────────────────────────────────────
+    prophet_changepoint_prior_scale: 0.1
+
+    # ── Layer-3 LightGBM ─────────────────────────────────────────────────────
+    lgbm_n_estimators: 1200
+    lgbm_learning_rate: 0.05
+    lgbm_num_leaves: 63
+
+    # ── Evaluation ───────────────────────────────────────────────────────────
+    mape_threshold: 0.20    # reject model if mean MAPE > 20 %
+
+    model_display_name: "package-volume-inbound"
+
+  outbound:
+    # Two sources: recent (>= date_cutoff) and historical (< date_cutoff)
+    bq_tables:
+      - dataset: "PLACEHOLDER_OUTBOUND_DATASET"
+        table:   "PLACEHOLDER_OUTBOUND_RECENT_TABLE"     # NTW-21533
+        date_from: "2024-06-10"
+      - dataset: "PLACEHOLDER_OUTBOUND_DATASET"
+        table:   "PLACEHOLDER_OUTBOUND_HISTORICAL_TABLE" # NTW-18703
+        date_to:   "2024-06-09"
+
+    bq_columns:
+      package_id:    "PLACEHOLDER_COL_package_id"
+      scan_timestamp: "PLACEHOLDER_COL_scan_timestamp"
+      packing_units: "PLACEHOLDER_COL_packing_units"
+
+    lookback_days: 30
+    half_life_days: 10
+
+    prophet_changepoint_prior_scale: 0.7
+
+    lgbm_n_estimators: 1200
+    lgbm_learning_rate: 0.05
+    lgbm_num_leaves: 63
+
+    mape_threshold: 0.20
+
+    model_display_name: "package-volume-outbound"
+
+# ── Shared settings ───────────────────────────────────────────────────────────
+forecast_horizon: 28          # workdays ahead to predict
+evaluation_start_date: "2024-07-01"
+backtest_step_days: 7         # roll the backtest window every N days
+
+experiment_name: "package-volume-forecasting"
 
 training:
-  # Vertex AI training machine type
-  machine_type: "n1-standard-4"
-  # Container image used for training component
-  # Start with a pre-built image; build a custom one later
-  base_image: "us-docker.pkg.dev/vertex-ai/training/scikit-learn-cpu.1-0:latest"
-  # Hyperparameters — add yours here
-  hyperparameters:
-    n_estimators: 100
-    max_depth: 6
-    learning_rate: 0.1
-
-model:
-  # Name in Vertex AI Model Registry
-  display_name: "forecasting-model"
-  serving_container: "us-docker.pkg.dev/vertex-ai/prediction/sklearn-cpu.1-0:latest"
-
-experiment:
-  # Vertex AI Experiments for tracking runs
-  name: "forecasting-experiments"
+  machine_type: "n1-standard-8"
+  base_image: "python:3.10-slim"
