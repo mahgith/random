@@ -34,7 +34,7 @@ from configs.settings import settings, build_pipeline_params
 
 
 def compile_pipeline(output_path: str) -> None:
-    from kfp.v2.compiler import Compiler
+    from kfp.compiler import Compiler
     from pipelines.pipeline.forecasting_pipeline import forecasting_pipeline
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)

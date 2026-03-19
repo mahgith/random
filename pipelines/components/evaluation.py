@@ -28,7 +28,7 @@ Metrics reported by forecast-week bucket:
 Approval gate: mean WAPE ≤ wape_threshold AND mean MAPE ≤ mape_threshold.
 """
 
-from kfp.v2.dsl import component, Input, Output, Dataset, Model, Metrics
+from kfp.dsl import component, Input, Output, Dataset, Model, Metrics, Artifact
 
 _FORECASTING_IMAGE = "europe-west1-docker.pkg.dev/your-gcp-project-id/ml-images/forecasting:latest"
 
@@ -43,8 +43,8 @@ def evaluation_op(
     backtest_step_days: int,
     mape_threshold: float,
     wape_threshold: float,
-    evaluation_metrics: Output[Metrics] = None,   # type: ignore[assignment]
-    approval_decision: Output[str] = None,        # type: ignore[assignment]
+    evaluation_metrics: Output[Metrics],
+    approval_decision: Output[Artifact],
 ):
     """Run rolling backtest, compute MAPE + WAPE, and decide whether to approve."""
     import json

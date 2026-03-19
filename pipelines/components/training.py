@@ -35,7 +35,7 @@ Model bundle saved to model.path/:
     lgbm_features.json       — ordered feature list for L3 inference
 """
 
-from kfp.v2.dsl import component, Input, Output, Dataset, Model, Metrics
+from kfp.dsl import component, Input, Output, Dataset, Model, Metrics
 
 _FORECASTING_IMAGE = "europe-west1-docker.pkg.dev/your-gcp-project-id/ml-images/forecasting:latest"
 
@@ -56,8 +56,8 @@ def training_op(
     experiment_name: str,
     run_prefix: str,
     # Outputs
-    model: Output[Model] = None,        # type: ignore[assignment]
-    metrics: Output[Metrics] = None,    # type: ignore[assignment]
+    model: Output[Model],
+    metrics: Output[Metrics],
 ):
     """Tune hyperparameters via mini-backtest, then train the candidate model."""
     import itertools

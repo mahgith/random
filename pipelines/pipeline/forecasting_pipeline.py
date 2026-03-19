@@ -27,8 +27,8 @@ USAGE
     python scripts/run_pipeline.py --direction outbound
 """
 
-from kfp.v2 import dsl
-from kfp.v2.dsl import pipeline
+from kfp import dsl
+from kfp.dsl import pipeline
 
 from pipelines.components.data_ingestion import data_ingestion_op
 from pipelines.components.preprocessing import preprocessing_op
@@ -144,7 +144,7 @@ def forecasting_pipeline(
         direction=direction,
         processed_data=preprocess_task.outputs["processed_data"],
         challenger_model=training_task.outputs["model"],
-        approval_decision_path=evaluation_task.outputs["approval_decision"],
+        approval_decision=evaluation_task.outputs["approval_decision"],
         project_id=project_id,
         region=region,
         model_display_name=model_display_name,
@@ -167,7 +167,7 @@ def forecasting_pipeline(
         direction=direction,
         processed_data=preprocess_task.outputs["processed_data"],
         candidate_model=training_task.outputs["model"],
-        champion_gate_decision_path=champ_task.outputs["champion_gate_decision"],
+        champion_gate_decision=champ_task.outputs["champion_gate_decision"],
     )
     refit_task.set_display_name("Refit — final model on 100% data")
     refit_task.after(champ_task)
@@ -179,7 +179,7 @@ def forecasting_pipeline(
     registration_task = model_registration_op(
         direction=direction,
         model=refit_task.outputs["refit_model"],
-        champion_gate_decision_path=champ_task.outputs["champion_gate_decision"],
+        champion_gate_decision=champ_task.outputs["champion_gate_decision"],
         project_id=project_id,
         region=region,
         model_display_name=model_display_name,

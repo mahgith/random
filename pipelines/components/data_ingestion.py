@@ -21,7 +21,7 @@ Update parameters/inbound/params_v1.yaml or parameters/outbound/params_v1.yaml.
 That is the only file you need to edit — no changes needed here.
 """
 
-from kfp.v2.dsl import component, Output, Dataset
+from kfp.dsl import component, Output, Dataset
 
 # Custom image — eliminates the pip install overhead at every pipeline run.
 # Build with: make build-push  (from docker/forecasting/Makefile)
@@ -35,7 +35,7 @@ def data_ingestion_op(
     project_id: str,
     bq_tables_json: str,      # JSON list of {dataset, table, date_from?, date_to?}
     bq_columns_json: str,     # JSON dict mapping logical name → actual BQ column name
-    raw_dataset: Output[Dataset] = None,  # type: ignore[assignment]
+    raw_dataset: Output[Dataset],
 ):
     """Ingest raw warehouse scan data from BigQuery and write clean daily series."""
     import json

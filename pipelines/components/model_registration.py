@@ -19,7 +19,7 @@ Lifecycle management
 This ensures exactly one champion exists at any time.
 """
 
-from kfp.v2.dsl import component, Input, Output, Model
+from kfp.dsl import component, Input, Output, Model, Artifact
 
 _FORECASTING_IMAGE = "europe-west1-docker.pkg.dev/your-gcp-project-id/ml-images/forecasting:latest"
 
@@ -28,7 +28,7 @@ _FORECASTING_IMAGE = "europe-west1-docker.pkg.dev/your-gcp-project-id/ml-images/
 def model_registration_op(
     direction: str,
     model: Input[Model],
-    champion_gate_decision_path: str,   # path to file written by champion_vs_challenger_op
+    champion_gate_decision: Input[Artifact],  # written by champion_vs_challenger_op
     project_id: str,
     region: str,
     model_display_name: str,
@@ -37,7 +37,7 @@ def model_registration_op(
     champion_label_role: str,
     archived_label_role: str,
     serving_container_image_uri: str = "",
-    registered_model_resource_name: Output[str] = None,  # type: ignore[assignment]
+    registered_model_resource_name: Output[Artifact],
 ):
     """Register the refitted model and manage champion/archived labels."""
     import structlog
@@ -54,7 +54,7 @@ def model_registration_op(
     )
 
     # ── Check champion gate decision ──────────────────────────────────────────
-    with open(champion_gate_decision_path) as f:
+    with open(champion_gate_decision.path) as f:
         decision = f.read().strip()
 
     if decision != "approved":

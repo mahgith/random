@@ -20,7 +20,7 @@ If no Champion exists yet (first pipeline run), the gate passes automatically
 so the new model can bootstrap the registry.
 """
 
-from kfp.v2.dsl import component, Input, Output, Dataset, Model, Metrics
+from kfp.dsl import component, Input, Output, Dataset, Model, Metrics, Artifact
 
 _FORECASTING_IMAGE = "europe-west1-docker.pkg.dev/your-gcp-project-id/ml-images/forecasting:latest"
 
@@ -30,7 +30,7 @@ def champion_vs_challenger_op(
     direction: str,
     processed_data: Input[Dataset],
     challenger_model: Input[Model],
-    approval_decision_path: str,         # path to file written by evaluation_op
+    approval_decision: Input[Artifact],  # written by evaluation_op
     project_id: str,
     region: str,
     model_display_name: str,
@@ -41,8 +41,8 @@ def champion_vs_challenger_op(
     forecast_horizon: int,
     backtest_step_days: int,
     evaluation_start_date: str,
-    champion_gate_metrics: Output[Metrics] = None,  # type: ignore[assignment]
-    champion_gate_decision: Output[str] = None,      # type: ignore[assignment]
+    champion_gate_metrics: Output[Metrics],
+    champion_gate_decision: Output[Artifact],
 ):
     """Compare challenger vs champion and write approved/rejected to champion_gate_decision."""
     import json
@@ -68,7 +68,7 @@ def champion_vs_challenger_op(
             f.write(decision)
 
     # ── Check upstream evaluation gate ────────────────────────────────────────
-    with open(approval_decision_path) as f:
+    with open(approval_decision.path) as f:
         upstream_decision = f.read().strip()
 
     if upstream_decision != "approved":

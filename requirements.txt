@@ -1,5 +1,5 @@
 # Core KFP + Vertex AI
-kfp==1.8.22                       # Kubeflow Pipelines SDK (v1 API, compatible with Vertex AI)
+kfp>=2.0.0                        # Kubeflow Pipelines SDK v2
 google-cloud-aiplatform>=1.38.0   # Vertex AI Python SDK
 google-cloud-bigquery>=3.0.0      # BigQuery data source
 google-cloud-storage>=2.0.0       # GCS operations

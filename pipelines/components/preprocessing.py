@@ -12,7 +12,7 @@ Output: processed_data — enriched DataFrame with all features used by
                          training and evaluation components
 """
 
-from kfp.v2.dsl import component, Input, Output, Dataset
+from kfp.dsl import component, Input, Output, Dataset
 
 _FORECASTING_IMAGE = "europe-west1-docker.pkg.dev/your-gcp-project-id/ml-images/forecasting:latest"
 
@@ -21,7 +21,7 @@ _FORECASTING_IMAGE = "europe-west1-docker.pkg.dev/your-gcp-project-id/ml-images/
 def preprocessing_op(
     direction: str,
     raw_dataset: Input[Dataset],
-    processed_data: Output[Dataset] = None,  # type: ignore[assignment]
+    processed_data: Output[Dataset],
 ):
     """Add calendar, holiday, and rolling features to the daily time series."""
     import structlog

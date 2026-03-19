@@ -24,7 +24,7 @@ Model bundle saved to refit_model.path/:
     lgbm_features.json       — ordered feature list
 """
 
-from kfp.v2.dsl import component, Input, Output, Dataset, Model
+from kfp.dsl import component, Input, Output, Dataset, Model, Artifact
 
 _FORECASTING_IMAGE = "europe-west1-docker.pkg.dev/your-gcp-project-id/ml-images/forecasting:latest"
 
@@ -33,9 +33,9 @@ _FORECASTING_IMAGE = "europe-west1-docker.pkg.dev/your-gcp-project-id/ml-images/
 def refit_op(
     direction: str,
     processed_data: Input[Dataset],
-    candidate_model: Input[Model],       # carries best hyperparams in metadata
-    champion_gate_decision_path: str,    # path to file written by champion_vs_challenger_op
-    refit_model: Output[Model] = None,   # type: ignore[assignment]
+    candidate_model: Input[Model],
+    champion_gate_decision: Input[Artifact],  # written by champion_vs_challenger_op
+    refit_model: Output[Model],
 ):
     """
     Re-train the model on full data with the winning hyperparameters.
@@ -55,7 +55,7 @@ def refit_op(
     structlog.contextvars.bind_contextvars(direction=direction)
 
     # ── Check champion gate ───────────────────────────────────────────────────
-    with open(champion_gate_decision_path) as f:
+    with open(champion_gate_decision.path) as f:
         decision = f.read().strip()
 
     if decision != "approved":
