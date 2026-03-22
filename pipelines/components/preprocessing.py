@@ -1,18 +1,18 @@
 """
 PREPROCESSING COMPONENT
 =======================
-Adds calendar features, French public-holiday flags, and rolling
-statistics to the raw daily time series produced by data_ingestion_op.
+Reads the raw daily time series from BigQuery (written by data_ingestion_op),
+adds calendar features, French public-holiday flags, and rolling statistics,
+then writes the enriched DataFrame back to BigQuery.
 
-This matches the feature engineering cells in modeling_inbound.ipynb /
-modeling_outbound.ipynb.
+This is part of Pipeline 1 (data prep — runs daily).
+Pipeline 2 (training) reads the output BQ table directly.
 
-Input:  raw_dataset    — daily workday series [ds, y]
-Output: processed_data — enriched DataFrame with all features used by
-                         training and evaluation components
+Input BQ table:  project.bq_raw_dataset.bq_raw_table           (ds, y)
+Output BQ table: project.bq_output_dataset.bq_output_table     (ds, y, + features)
 """
 
-from kfp.dsl import component, Input, Output, Dataset
+from kfp.dsl import component
 
 _FORECASTING_IMAGE = "europe-west1-docker.pkg.dev/your-gcp-project-id/ml-images/forecasting:latest"
 
@@ -20,23 +20,36 @@ _FORECASTING_IMAGE = "europe-west1-docker.pkg.dev/your-gcp-project-id/ml-images/
 @component(base_image=_FORECASTING_IMAGE)
 def preprocessing_op(
     direction: str,
-    raw_dataset: Input[Dataset],
-    processed_data: Output[Dataset],
+    project_id: str,
+    location: str,
+    bq_raw_dataset: str,       # dataset written by data_ingestion_op
+    bq_raw_table: str,         # table written by data_ingestion_op
+    bq_output_dataset: str,    # dataset to write enriched series into
+    bq_output_table: str,      # table to write enriched series into
 ):
     """Add calendar, holiday, and rolling features to the daily time series."""
     import structlog
     import pandas as pd
     import holidays as hol_lib
+    from google.cloud import bigquery
     from common.core.logger import get_logger
 
     logger = get_logger("preprocessing")
-    structlog.contextvars.bind_contextvars(direction=direction)
+    structlog.contextvars.bind_contextvars(
+        direction=direction,
+        project_id=project_id,
+        source=f"{project_id}.{bq_raw_dataset}.{bq_raw_table}",
+        destination=f"{project_id}.{bq_output_dataset}.{bq_output_table}",
+    )
 
-    # ── Load ──────────────────────────────────────────────────────────────────
-    df = pd.read_parquet(raw_dataset.path + ".parquet")
+    client = bigquery.Client(project=project_id, location=location)
+
+    # ── Load from BigQuery ────────────────────────────────────────────────────
+    raw_table = f"`{project_id}.{bq_raw_dataset}.{bq_raw_table}`"
+    df = client.query(f"SELECT ds, y FROM {raw_table} ORDER BY ds").to_dataframe()
     df["ds"] = pd.to_datetime(df["ds"])
     df = df.sort_values("ds").reset_index(drop=True)
-    logger.info("Loaded raw series", rows=len(df))
+    logger.info("Loaded raw series from BigQuery", rows=len(df))
 
     # ── French public holidays ────────────────────────────────────────────────
     years = df["ds"].dt.year.unique().tolist()
@@ -86,8 +99,10 @@ def preprocessing_op(
         )
 
     df = df.reset_index(drop=True)
-
     logger.info("Preprocessing complete", columns=list(df.columns), shape=list(df.shape))
 
-    df.to_parquet(processed_data.path + ".parquet", index=False)
-    logger.info("Written to artifact", path=processed_data.path)
+    # ── Write to BigQuery ─────────────────────────────────────────────────────
+    full_table_id = f"{project_id}.{bq_output_dataset}.{bq_output_table}"
+    job_config = bigquery.LoadJobConfig(write_disposition="WRITE_TRUNCATE")
+    client.load_table_from_dataframe(df, full_table_id, job_config=job_config).result()
+    logger.info("Written to BigQuery", table=full_table_id, rows=len(df))

@@ -21,7 +21,7 @@ Update parameters/inbound/params_v1.yaml or parameters/outbound/params_v1.yaml.
 That is the only file you need to edit — no changes needed here.
 """
 
-from kfp.dsl import component, Output, Dataset
+from kfp.dsl import component
 
 # Custom image — eliminates the pip install overhead at every pipeline run.
 # Build with: make build-push  (from docker/forecasting/Makefile)
@@ -31,11 +31,13 @@ _FORECASTING_IMAGE = "europe-west1-docker.pkg.dev/your-gcp-project-id/ml-images/
 
 @component(base_image=_FORECASTING_IMAGE)
 def data_ingestion_op(
-    direction: str,           # "inbound" or "outbound"
+    direction: str,              # "inbound" or "outbound"
     project_id: str,
-    bq_tables_json: str,      # JSON list of {dataset, table, date_from?, date_to?}
-    bq_columns_json: str,     # JSON dict mapping logical name → actual BQ column name
-    raw_dataset: Output[Dataset],
+    location: str,               # BQ region, e.g. "europe-west1"
+    bq_tables_json: str,         # JSON list of {dataset, table, date_from?, date_to?}
+    bq_columns_json: str,        # JSON dict mapping logical name → actual BQ column name
+    bq_output_dataset: str,      # BQ dataset to write the raw series into
+    bq_output_table: str,        # BQ table to write the raw series into
 ):
     """Ingest raw warehouse scan data from BigQuery and write clean daily series."""
     import json
@@ -146,5 +148,7 @@ def data_ingestion_op(
         total_y=round(float(df["y"].sum()), 0),
     )
 
-    df.to_parquet(raw_dataset.path + ".parquet", index=False)
-    logger.info("Written to artifact", path=raw_dataset.path)
+    full_table_id = f"{project_id}.{bq_output_dataset}.{bq_output_table}"
+    job_config = bigquery.LoadJobConfig(write_disposition="WRITE_TRUNCATE")
+    client.load_table_from_dataframe(df, full_table_id, job_config=job_config).result()
+    logger.info("Written to BigQuery", table=full_table_id, rows=len(df))

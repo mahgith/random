@@ -28,7 +28,7 @@ Metrics reported by forecast-week bucket:
 Approval gate: mean WAPE ≤ wape_threshold AND mean MAPE ≤ mape_threshold.
 """
 
-from kfp.dsl import component, Input, Output, Dataset, Model, Metrics, Artifact
+from kfp.dsl import component, Input, Output, Model, Metrics, Artifact
 
 _FORECASTING_IMAGE = "europe-west1-docker.pkg.dev/your-gcp-project-id/ml-images/forecasting:latest"
 
@@ -36,7 +36,10 @@ _FORECASTING_IMAGE = "europe-west1-docker.pkg.dev/your-gcp-project-id/ml-images/
 @component(base_image=_FORECASTING_IMAGE)
 def evaluation_op(
     direction: str,
-    processed_data: Input[Dataset],
+    project_id: str,
+    location: str,
+    bq_processed_dataset: str,
+    bq_processed_table: str,
     model: Input[Model],
     evaluation_start_date: str,
     forecast_horizon: int,
@@ -54,6 +57,7 @@ def evaluation_op(
     import joblib
     import numpy as np
     import pandas as pd
+    from google.cloud import bigquery
     from common.core.logger import get_logger
 
     logger = get_logger("evaluation")
@@ -63,8 +67,10 @@ def evaluation_op(
         forecast_horizon=forecast_horizon,
     )
 
-    # ── Load data and model bundle ────────────────────────────────────────────
-    df = pd.read_parquet(processed_data.path + ".parquet")
+    # ── Load data from BigQuery ───────────────────────────────────────────────
+    bq_client = bigquery.Client(project=project_id, location=location)
+    processed_table = f"`{project_id}.{bq_processed_dataset}.{bq_processed_table}`"
+    df = bq_client.query(f"SELECT * FROM {processed_table} ORDER BY ds").to_dataframe()
     df["ds"] = pd.to_datetime(df["ds"])
     df = df.sort_values("ds").reset_index(drop=True)
 
