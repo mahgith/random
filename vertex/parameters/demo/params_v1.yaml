@@ -1,0 +1,8 @@
+infra:
+  project_id:   "forecast-sales-poc"      # TODO: your GCP project ID
+  location:     "europe-west9"
+  bucket_name:  "forecast-sales-bucket-poc"  # TODO: your GCS bucket (no gs:// prefix)
+
+demo:
+  gcs_uri:       "gs://forecast-sales-bucket-poc/demo/data.csv"  # TODO: path to your CSV
+  target_column: "y"   # name of the numeric column to "predict"
