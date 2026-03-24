@@ -9,7 +9,7 @@ No transformation is applied here.
 
 from kfp.dsl import component, Output, Dataset
 
-BASE_IMAGE = "europe-west9-docker.pkg.dev/forecast-sales-poc/forecast-sales-images/base:latest"
+BASE_IMAGE = "europe-west9-docker.pkg.dev/prj-ceva-gr-wkfc-adapt-dev/gr-forecast/base:latest"
 
 
 @component(base_image=BASE_IMAGE)
