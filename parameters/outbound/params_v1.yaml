@@ -6,13 +6,21 @@
 infra:
   project_id: "your-gcp-project-id"
   region: "europe-west1"
+  location: "europe-west1"          # BigQuery region (matches region)
   artifact_bucket: "gs://your-bucket-name"
 
   # Docker image URIs — update after building with docker/forecasting/Makefile
   forecasting_image: "europe-west1-docker.pkg.dev/your-gcp-project-id/ml-images/forecasting:latest"
   serving_image:     "europe-west1-docker.pkg.dev/your-gcp-project-id/ml-images/serving:latest"
 
-# ── BigQuery source tables ────────────────────────────────────────────────────
+# ── Pipeline 1 — Data Prep (runs daily) ───────────────────────────────────────
+
+gcs_uris: []                        # e.g. ["gs://your-bucket/raw/outbound/*.csv"]
+gcs_raw_schema: ""
+
+bq_raw_dataset: "logistics"
+bq_raw_table:   "package_scans_outbound"
+
 # Two sources: recent data (>= date_from) and historical (< date_from)
 bq_tables:
   - dataset: "PLACEHOLDER_OUTBOUND_DATASET"
@@ -22,13 +30,19 @@ bq_tables:
     table:   "PLACEHOLDER_OUTBOUND_HISTORICAL_TABLE"  # NTW-18703
     date_to:   "2024-06-09"
 
-# ── BQ column names ───────────────────────────────────────────────────────────
 bq_columns:
-  package_id:    "PLACEHOLDER_COL_package_id"
+  package_id:     "PLACEHOLDER_COL_package_id"
   scan_timestamp: "PLACEHOLDER_COL_scan_timestamp"
-  packing_units: "PLACEHOLDER_COL_packing_units"
+  packing_units:  "PLACEHOLDER_COL_packing_units"
 
-# ── Training hyperparameter grid ──────────────────────────────────────────────
+bq_ingested_dataset: "logistics"
+bq_ingested_table:   "raw_series_outbound"
+
+bq_processed_dataset: "logistics"
+bq_processed_table:   "processed_series_outbound"
+
+# ── Pipeline 2 — Training (runs monthly or on perf drop) ──────────────────────
+
 params_training:
   lookback_days: 30
   half_life_days: 10
@@ -41,7 +55,6 @@ params_training:
   experiment_name: "package-volume-outbound-experiments"
   run_prefix: "outbound-tuning"
 
-# ── Evaluation ────────────────────────────────────────────────────────────────
 params_evaluation:
   forecast_horizon: 28
   evaluation_start_date: "2024-07-01"
@@ -49,7 +62,6 @@ params_evaluation:
   max_allowed_mape: 0.20
   max_allowed_wape: 0.20
 
-# ── Champion vs Challenger gate ───────────────────────────────────────────────
 params_champion_vs_challenger:
   model_display_name: "package-volume-outbound"
   champion_label_env: "prod"
@@ -57,7 +69,6 @@ params_champion_vs_challenger:
   delta_rel: 0.03
   delta_abs: 0.005
 
-# ── Model registration ────────────────────────────────────────────────────────
 params_register:
   model_display_name: "package-volume-outbound"
   champion_label_env: "prod"

@@ -2,14 +2,15 @@
 PROJECT SETTINGS + PARAMETER LOADER
 =====================================
 Thin wrapper around common.core.Settings that adds project-specific
-fields and a helper to load per-direction pipeline parameters from
+fields and helpers to load per-direction pipeline parameters from
 parameters/<direction>/params_v1.yaml.
 
 Usage:
-    from configs.settings import get_settings, build_pipeline_params
+    from configs.settings import get_settings, build_data_prep_params, build_forecasting_params
 
     s = get_settings()
-    params = build_pipeline_params("inbound")
+    data_prep_params  = build_data_prep_params("inbound")
+    forecasting_params = build_forecasting_params("inbound")
 """
 
 import json
@@ -35,7 +36,10 @@ class ProjectSettings(_BaseSettings):
     )
 
     PIPELINE_NAME: str = Field(default="package-volume-forecasting")
-    COMPILED_PIPELINE_PATH: str = Field(
+    COMPILED_DATA_PREP_PATH: str = Field(
+        default="pipelines/compiled/data_prep_pipeline.json"
+    )
+    COMPILED_FORECASTING_PATH: str = Field(
         default="pipelines/compiled/forecasting_pipeline.json"
     )
 
@@ -80,9 +84,53 @@ def load_pipeline_params(direction: str, version: str = "params_v1") -> Dict[str
         return yaml.safe_load(f) or {}
 
 
-def build_pipeline_params(direction: str, version: str = "params_v1") -> dict:
+def build_data_prep_params(direction: str, version: str = "params_v1") -> dict:
     """
-    Builds the flat parameter dict passed to the Vertex AI PipelineJob.
+    Builds the parameter dict for data_prep_pipeline (Pipeline 1).
+    Reads all values from parameters/<direction>/<version>.yaml.
+
+    Args:
+        direction: "inbound" or "outbound"
+        version:   parameter file version (default "params_v1")
+
+    Returns:
+        Dict of typed values for aiplatform.PipelineJob(parameter_values=...).
+    """
+    cfg = load_pipeline_params(direction, version)
+
+    infra = cfg.get("infra", {})
+
+    return {
+        # Identity
+        "direction": direction,
+
+        # GCP infra
+        "project_id": infra["project_id"],
+        "location":   infra["location"],
+
+        # GCS → BQ raw load
+        "gcs_uris_json":      json.dumps(cfg.get("gcs_uris", [])),
+        "gcs_raw_schema_json": cfg.get("gcs_raw_schema", ""),
+        "bq_raw_dataset":     cfg.get("bq_raw_dataset", "logistics"),
+        "bq_raw_table":       cfg.get("bq_raw_table", f"package_scans_{direction}"),
+
+        # BQ source tables for data_ingestion_op
+        "bq_tables_json":  json.dumps(cfg.get("bq_tables", [])),
+        "bq_columns_json": json.dumps(cfg.get("bq_columns", {})),
+
+        # Intermediate raw series table (data_ingestion_op output)
+        "bq_ingested_dataset": cfg.get("bq_ingested_dataset", "logistics"),
+        "bq_ingested_table":   cfg.get("bq_ingested_table", f"raw_series_{direction}"),
+
+        # Processed features table (preprocessing_op output — read by Pipeline 2)
+        "bq_processed_dataset": cfg.get("bq_processed_dataset", "logistics"),
+        "bq_processed_table":   cfg.get("bq_processed_table", f"processed_series_{direction}"),
+    }
+
+
+def build_forecasting_params(direction: str, version: str = "params_v1") -> dict:
+    """
+    Builds the parameter dict for forecasting_pipeline (Pipeline 2).
     Reads all values from parameters/<direction>/<version>.yaml.
 
     Args:
@@ -107,19 +155,20 @@ def build_pipeline_params(direction: str, version: str = "params_v1") -> dict:
         # GCP infra
         "project_id":      infra["project_id"],
         "region":          infra["region"],
+        "location":        infra["location"],
         "artifact_bucket": infra["artifact_bucket"],
 
-        # BQ sources — serialised to JSON string (KFP typed pipeline params)
-        "bq_tables_json":  json.dumps(cfg.get("bq_tables", [])),
-        "bq_columns_json": json.dumps(cfg.get("bq_columns", {})),
+        # Processed data source (written by data_prep_pipeline)
+        "bq_processed_dataset": cfg.get("bq_processed_dataset", "logistics"),
+        "bq_processed_table":   cfg.get("bq_processed_table", f"processed_series_{direction}"),
 
         # Training
-        "lookback_days":     train["lookback_days"],
-        "half_life_days":    train["half_life_days"],
-        "hp_grid_json":      json.dumps(train.get("hp_grid", {})),
+        "lookback_days":      train["lookback_days"],
+        "half_life_days":     train["half_life_days"],
+        "hp_grid_json":       json.dumps(train.get("hp_grid", {})),
         "tuning_num_cutoffs": int(train.get("tuning_num_cutoffs", 4)),
-        "experiment_name":   train["experiment_name"],
-        "run_prefix":        train.get("run_prefix", f"{direction}-tuning"),
+        "experiment_name":    train["experiment_name"],
+        "run_prefix":         train.get("run_prefix", f"{direction}-tuning"),
 
         # Evaluation
         "forecast_horizon":      evalu["forecast_horizon"],

@@ -6,13 +6,28 @@
 infra:
   project_id: "your-gcp-project-id"
   region: "europe-west1"
+  location: "europe-west1"          # BigQuery region (matches region)
   artifact_bucket: "gs://your-bucket-name"
 
   # Docker image URIs — update after building with docker/forecasting/Makefile
   forecasting_image: "europe-west1-docker.pkg.dev/your-gcp-project-id/ml-images/forecasting:latest"
   serving_image:     "europe-west1-docker.pkg.dev/your-gcp-project-id/ml-images/serving:latest"
 
-# ── BigQuery source tables ────────────────────────────────────────────────────
+# ── Pipeline 1 — Data Prep (runs daily) ───────────────────────────────────────
+# GCS → BigQuery raw → BigQuery processed features
+
+# GCS source files to load into BigQuery (for gcs_to_bigquery_op).
+# JSON list of GCS URIs.  Leave empty ("[]") if raw data is already in BQ.
+gcs_uris: []                        # e.g. ["gs://your-bucket/raw/inbound/*.csv"]
+gcs_raw_schema: ""                  # leave empty for BigQuery auto-detect
+
+# BigQuery destination for raw CSV load (gcs_to_bigquery_op output)
+bq_raw_dataset: "logistics"
+bq_raw_table:   "package_scans_inbound"
+
+# BigQuery source tables for data_ingestion_op
+# Each entry maps to one warehouse system.
+# `date_from` / `date_to` are optional date filters (YYYY-MM-DD).
 bq_tables:
   - dataset: "PLACEHOLDER_INBOUND_DATASET"
     table:   "PLACEHOLDER_INBOUND_TABLE_1"    # NTW-23280
@@ -21,11 +36,22 @@ bq_tables:
   - dataset: "PLACEHOLDER_INBOUND_DATASET"
     table:   "PLACEHOLDER_INBOUND_TABLE_3"    # NTW-26134
 
-# ── BQ column names ───────────────────────────────────────────────────────────
+# BQ column names — fill in once you know the schema
 bq_columns:
-  package_id:    "PLACEHOLDER_COL_package_id"
+  package_id:     "PLACEHOLDER_COL_package_id"
   scan_timestamp: "PLACEHOLDER_COL_scan_timestamp"
-  packing_units: "PLACEHOLDER_COL_packing_units"
+  packing_units:  "PLACEHOLDER_COL_packing_units"
+
+# Intermediate BQ table written by data_ingestion_op (raw daily series: ds, y)
+bq_ingested_dataset: "logistics"
+bq_ingested_table:   "raw_series_inbound"
+
+# Output BQ table written by preprocessing_op (enriched features — read by Pipeline 2)
+bq_processed_dataset: "logistics"
+bq_processed_table:   "processed_series_inbound"
+
+# ── Pipeline 2 — Training (runs monthly or on perf drop) ──────────────────────
+# Reads bq_processed_dataset.bq_processed_table set above.
 
 # ── Training hyperparameter grid ──────────────────────────────────────────────
 # Each entry is a list; all combinations will be evaluated.
@@ -51,7 +77,7 @@ params_evaluation:
   backtest_step_days: 7
   # Primary gate metric — pipeline stops here if these are exceeded
   max_allowed_mape: 0.20
-  max_allowed_wape: 0.20   # WAPE added; used as primary champion metric
+  max_allowed_wape: 0.20
 
 # ── Champion vs Challenger gate ───────────────────────────────────────────────
 params_champion_vs_challenger:
