@@ -20,7 +20,7 @@ If no Champion exists yet (first pipeline run), the gate passes automatically
 so the new model can bootstrap the registry.
 """
 
-from kfp.dsl import component, Input, Output, Model, Metrics, Artifact
+from kfp.dsl import component, Input, Output, Dataset, Model, Metrics, Artifact
 
 _FORECASTING_IMAGE = "europe-west1-docker.pkg.dev/your-gcp-project-id/ml-images/forecasting:latest"
 
@@ -28,12 +28,10 @@ _FORECASTING_IMAGE = "europe-west1-docker.pkg.dev/your-gcp-project-id/ml-images/
 @component(base_image=_FORECASTING_IMAGE)
 def champion_vs_challenger_op(
     direction: str,
-    project_id: str,
-    location: str,
-    bq_processed_dataset: str,
-    bq_processed_table: str,
+    processed_data: Input[Dataset],
     challenger_model: Input[Model],
     approval_decision: Input[Artifact],  # written by evaluation_op
+    project_id: str,
     region: str,
     model_display_name: str,
     champion_label_env: str,
@@ -55,7 +53,7 @@ def champion_vs_challenger_op(
     import joblib
     import numpy as np
     import pandas as pd
-    from google.cloud import aiplatform, bigquery, storage
+    from google.cloud import aiplatform, storage
     from common.core.logger import get_logger
 
     logger = get_logger("champion-vs-challenger")
@@ -78,10 +76,8 @@ def champion_vs_challenger_op(
         _write_decision("rejected")
         return
 
-    # ── Load processed data from BigQuery ─────────────────────────────────────
-    bq_client = bigquery.Client(project=project_id, location=location)
-    processed_table = f"`{project_id}.{bq_processed_dataset}.{bq_processed_table}`"
-    df = bq_client.query(f"SELECT * FROM {processed_table} ORDER BY ds").to_dataframe()
+    # ── Load processed data from artifact ─────────────────────────────────────
+    df = pd.read_parquet(processed_data.path + ".parquet")
     df["ds"] = pd.to_datetime(df["ds"])
     df = df.sort_values("ds").reset_index(drop=True)
 

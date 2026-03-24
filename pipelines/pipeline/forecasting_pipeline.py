@@ -1,8 +1,9 @@
 """
 FORECASTING PIPELINE  (Pipeline 2 — runs monthly or on performance drop)
 =========================================================================
-Reads the already-processed BigQuery table produced by data_prep_pipeline
-and runs the full training → evaluation → champion/challenger → refit → registration flow.
+Reads the processed BigQuery table produced by data_prep_pipeline, materialises
+it once as a KFP Dataset artifact, then passes that artifact through the full
+training → evaluation → champion/challenger → refit → registration flow.
 
 Because data prep is decoupled, this pipeline can be re-triggered as often as
 needed (e.g. after a model performance drop) without re-processing the data.
@@ -13,11 +14,12 @@ Run data_prep_pipeline first (or ensure the BQ processed table is up to date).
 
 PIPELINE GRAPH
 --------------
-  training  (HP grid search + Vertex AI Experiments)
-      └─► evaluation  (rolling backtest, WAPE + MAPE gates)
-              └─► champion_vs_challenger  (compare vs prod model)
-                      └─► refit  (train on 100% data with best params)
-                              └─► model_registration  (champion label management)
+  load_data    (BQ → Dataset artifact)
+      └─► training  (HP grid search + Vertex AI Experiments)
+              └─► evaluation  (rolling backtest, WAPE + MAPE gates)
+                      └─► champion_vs_challenger  (compare vs prod model)
+                              └─► refit  (train on 100% data with best params)
+                                      └─► model_registration  (champion label management)
 
 Gates
 -----
@@ -36,6 +38,7 @@ USAGE
 from kfp import dsl
 from kfp.dsl import pipeline
 
+from pipelines.components.load_data import load_data_op
 from pipelines.components.training import training_op
 from pipelines.components.evaluation import evaluation_op
 from pipelines.components.champion_vs_challenger import champion_vs_challenger_op
@@ -59,7 +62,7 @@ def forecasting_pipeline(
 
     # ── Processed data source (written by data_prep_pipeline) ─────────────────
     bq_processed_dataset: str,       # e.g. "logistics"
-    bq_processed_table: str,         # e.g. "processed_series"
+    bq_processed_table: str,         # e.g. "processed_series_inbound"
 
     # ── Training ──────────────────────────────────────────────────────────────
     lookback_days: int,
@@ -87,12 +90,22 @@ def forecasting_pipeline(
     serving_container_image_uri: str,
     archived_label_role: str,
 ):
-    # ── Step 1: HP tuning + candidate training ────────────────────────────────
-    training_task = training_op(
-        direction=direction,
+    # ── Step 1: Load processed data from BigQuery → Dataset artifact ──────────
+    load_task = load_data_op(
+        project_id=project_id,
+        location=location,
         bq_processed_dataset=bq_processed_dataset,
         bq_processed_table=bq_processed_table,
-        location=location,
+    )
+    load_task.set_display_name("Load — BigQuery processed features → artifact")
+    load_task.set_caching_options(enable_caching=True)
+    load_task.set_cpu_limit("2")
+    load_task.set_memory_limit("8G")
+
+    # ── Step 2: HP tuning + candidate training ────────────────────────────────
+    training_task = training_op(
+        direction=direction,
+        processed_data=load_task.outputs["processed_data"],
         lookback_days=lookback_days,
         half_life_days=half_life_days,
         hp_grid_json=hp_grid_json,
@@ -107,13 +120,10 @@ def forecasting_pipeline(
     training_task.set_cpu_limit("8")
     training_task.set_memory_limit("32G")
 
-    # ── Step 2: Rolling backtest — WAPE + MAPE gate ───────────────────────────
+    # ── Step 3: Rolling backtest — WAPE + MAPE gate ───────────────────────────
     evaluation_task = evaluation_op(
         direction=direction,
-        project_id=project_id,
-        location=location,
-        bq_processed_dataset=bq_processed_dataset,
-        bq_processed_table=bq_processed_table,
+        processed_data=load_task.outputs["processed_data"],
         model=training_task.outputs["model"],
         evaluation_start_date=evaluation_start_date,
         forecast_horizon=forecast_horizon,
@@ -127,15 +137,13 @@ def forecasting_pipeline(
     evaluation_task.set_cpu_limit("4")
     evaluation_task.set_memory_limit("16G")
 
-    # ── Step 3: Champion vs Challenger gate ───────────────────────────────────
+    # ── Step 4: Champion vs Challenger gate ───────────────────────────────────
     champ_task = champion_vs_challenger_op(
         direction=direction,
-        project_id=project_id,
-        location=location,
-        bq_processed_dataset=bq_processed_dataset,
-        bq_processed_table=bq_processed_table,
+        processed_data=load_task.outputs["processed_data"],
         challenger_model=training_task.outputs["model"],
         approval_decision=evaluation_task.outputs["approval_decision"],
+        project_id=project_id,
         region=region,
         model_display_name=model_display_name,
         champion_label_env=champion_label_env,
@@ -152,13 +160,10 @@ def forecasting_pipeline(
     champ_task.set_cpu_limit("4")
     champ_task.set_memory_limit("16G")
 
-    # ── Step 4: Refit on 100% of data ─────────────────────────────────────────
+    # ── Step 5: Refit on 100% of data ─────────────────────────────────────────
     refit_task = refit_op(
         direction=direction,
-        project_id=project_id,
-        location=location,
-        bq_processed_dataset=bq_processed_dataset,
-        bq_processed_table=bq_processed_table,
+        processed_data=load_task.outputs["processed_data"],
         candidate_model=training_task.outputs["model"],
         champion_gate_decision=champ_task.outputs["champion_gate_decision"],
     )
@@ -168,7 +173,7 @@ def forecasting_pipeline(
     refit_task.set_cpu_limit("4")
     refit_task.set_memory_limit("16G")
 
-    # ── Step 5: Register in Vertex AI Model Registry ──────────────────────────
+    # ── Step 6: Register in Vertex AI Model Registry ──────────────────────────
     registration_task = model_registration_op(
         direction=direction,
         model=refit_task.outputs["refit_model"],

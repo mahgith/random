@@ -35,7 +35,7 @@ Model bundle saved to model.path/:
     lgbm_features.json       — ordered feature list for L3 inference
 """
 
-from kfp.dsl import component, Output, Model, Metrics
+from kfp.dsl import component, Input, Output, Dataset, Model, Metrics
 
 _FORECASTING_IMAGE = "europe-west1-docker.pkg.dev/your-gcp-project-id/ml-images/forecasting:latest"
 
@@ -43,10 +43,7 @@ _FORECASTING_IMAGE = "europe-west1-docker.pkg.dev/your-gcp-project-id/ml-images/
 @component(base_image=_FORECASTING_IMAGE)
 def training_op(
     direction: str,
-    # Processed data source (BigQuery)
-    bq_processed_dataset: str,
-    bq_processed_table: str,
-    location: str,
+    processed_data: Input[Dataset],
     # L1 baseline
     lookback_days: int,
     half_life_days: int,
@@ -75,7 +72,7 @@ def training_op(
     import numpy as np
     import pandas as pd
     from prophet import Prophet
-    from google.cloud import aiplatform, bigquery
+    from google.cloud import aiplatform
     from common.core.logger import get_logger
 
     logger = get_logger("training")
@@ -83,10 +80,8 @@ def training_op(
 
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
 
-    # ── Load data from BigQuery ───────────────────────────────────────────────
-    bq_client = bigquery.Client(project=project_id, location=location)
-    processed_table = f"`{project_id}.{bq_processed_dataset}.{bq_processed_table}`"
-    df = bq_client.query(f"SELECT * FROM {processed_table} ORDER BY ds").to_dataframe()
+    # ── Load data from artifact ───────────────────────────────────────────────
+    df = pd.read_parquet(processed_data.path + ".parquet")
     df["ds"] = pd.to_datetime(df["ds"])
     df = df.sort_values("ds").reset_index(drop=True)
     logger.info("Training data loaded", rows=len(df), date_max=str(df["ds"].max().date()))
