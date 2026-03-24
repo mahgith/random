@@ -1,6 +1,6 @@
 infra:
   project_id:  "prj-ceva-gr-wkfc-adapt-dev"
-  location:    "europe-west9"
+  location:    "europe-west3"
   bucket_name: "csb-reg-euw3-forecast-data-dev"
 
 demo:
