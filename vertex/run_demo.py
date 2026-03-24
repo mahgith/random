@@ -63,7 +63,6 @@ def submit(params: dict) -> None:
     aiplatform.init(
         project=params["project_id"],
         location=params["location"],
-        staging_bucket=f"gs://{params['bucket_name']}",
     )
 
     job = aiplatform.PipelineJob(

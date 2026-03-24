@@ -1,8 +1,8 @@
 infra:
-  project_id:   "forecast-sales-poc"      # TODO: your GCP project ID
-  location:     "europe-west9"
-  bucket_name:  "forecast-sales-bucket-poc"  # TODO: your GCS bucket (no gs:// prefix)
+  project_id:  "prj-ceva-gr-wkfc-adapt-dev"
+  location:    "europe-west9"
+  bucket_name: "csb-reg-euw3-forecast-data-dev"
 
 demo:
-  gcs_uri:       "gs://forecast-sales-bucket-poc/demo/data.csv"  # TODO: path to your CSV
-  target_column: "y"   # name of the numeric column to "predict"
+  gcs_uri:       "gs://csb-reg-euw3-forecast-data-dev/test_component_data/data-adapt_02_preprocessed_data_productivity_hourly.csv"
+  target_column: "nb_um_scan_arr"
