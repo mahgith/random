@@ -42,7 +42,8 @@ def load_params() -> dict:
     return {
         "project_id":    infra["project_id"],
         "location":      infra["location"],
-        "bucket_name":   infra["bucket_name"],
+        "bucket_name":      infra["bucket_name"],
+        "service_account":  infra["service_account"],
         "gcs_uri":       demo["gcs_uri"],
         "target_column": demo["target_column"],
     }
@@ -76,7 +77,7 @@ def submit(params: dict) -> None:
         },
         enable_caching=False,
     )
-    job.submit()
+    job.submit(service_account=params["service_account"])
     print(f"\n[OK] Submitted!")
     print(f"     Dashboard: {job._dashboard_uri()}")
 
