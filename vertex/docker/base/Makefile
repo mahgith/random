@@ -1,6 +1,6 @@
 IMAGE_NAME:= base
 
-DOCKER_REGISTRY:= europe-west9-docker.pkg.dev/prj-ceva-gr-wkfc-adapt-dev/gr-forecast
+DOCKER_REGISTRY:= europe-west3-docker.pkg.dev/prj-ceva-gr-wkfc-adapt-dev/gr-forecast
 REGISTRY_URL:= $(DOCKER_REGISTRY)/$(IMAGE_NAME)
 
 # Get tags from version.yaml

@@ -1,6 +1,6 @@
 IMAGE_NAME:= ml-training
 
-DOCKER_REGISTRY:= europe-west9-docker.pkg.dev/prj-ceva-gr-wkfc-adapt-dev/gr-forecast
+DOCKER_REGISTRY:= europe-west3-docker.pkg.dev/prj-ceva-gr-wkfc-adapt-dev/gr-forecast
 REGISTRY_URL:= $(DOCKER_REGISTRY)/$(IMAGE_NAME)
 
 BASE_IMAGE:= $(DOCKER_REGISTRY)/base:latest
