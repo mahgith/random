@@ -2,7 +2,7 @@ infra:
   project_id:       "prj-ceva-gr-wkfc-adapt-dev"
   location:         "europe-west3"
   bucket_name:      "csb-reg-euw3-forecast-data-dev"
-  service_account:  "sa-cr-app-vertex-ai@prj-ceva-gr-wkfc-adapt-dev.iam.gserviceaccount.com"
+  service_account:  "sa-cr-app-wkfc-adapt-dev@prj-ceva-gr-wkfc-adapt-dev.iam.gserviceaccount.com"
 
 demo:
   gcs_uri:       "gs://csb-reg-euw3-forecast-data-dev/test_component_data/data-adapt_02_preprocessed_data_productivity_hourly.csv"
