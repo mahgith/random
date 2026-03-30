@@ -27,15 +27,15 @@ from pathlib import Path
 
 import yaml
 
-PARAMS_FILE = Path(__file__).parent / "parameters" / "demo" / "params_v1.yaml"
+DEFAULT_PARAMS_FILE = Path(__file__).parent / "parameters" / "demo" / "params_v1.yaml"
 COMPILED    = Path(__file__).parent / "pipelines" / "demo_pipeline.json"
 
 # Make vertex/ importable so the pipeline can import its components
 sys.path.insert(0, str(Path(__file__).parent))
 
 
-def load_params() -> dict:
-    with open(PARAMS_FILE) as f:
+def load_params(params_file: Path) -> dict:
+    with open(params_file) as f:
         cfg = yaml.safe_load(f)
     infra = cfg["infra"]
     demo  = cfg["demo"]
@@ -43,7 +43,7 @@ def load_params() -> dict:
         "project_id":    infra["project_id"],
         "location":      infra["location"],
         "bucket_name":      infra["bucket_name"],
-        "service_account":  infra["service_account"],
+        "service_account":  infra.get("service_account"),
         "gcs_uri":       demo["gcs_uri"],
         "target_column": demo["target_column"],
     }
@@ -77,7 +77,8 @@ def submit(params: dict) -> None:
         },
         enable_caching=False,
     )
-    job.submit(service_account=params["service_account"])
+    sa = params["service_account"]
+    job.submit(service_account=sa if sa else None)
     print(f"\n[OK] Submitted!")
     print(f"     Dashboard: {job._dashboard_uri()}")
 
@@ -86,9 +87,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run",      action="store_true")
     parser.add_argument("--compile-only", action="store_true")
+    parser.add_argument("--params",       type=Path, default=DEFAULT_PARAMS_FILE)
     args = parser.parse_args()
 
-    params = load_params()
+    params = load_params(args.params)
 
     if args.dry_run:
         import json
