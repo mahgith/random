@@ -1,0 +1,38 @@
+# ============================================================
+# GCS Training Pipeline — Parameters v1
+# ============================================================
+# Fill in:
+#   - date_column  : the column in your CSV that contains the date/datetime
+# Everything else is pre-filled for the dev environment.
+# ============================================================
+
+infra:
+  project_id:      "prj-ceva-gr-wkfc-adapt-dev"
+  location:        "europe-west3"
+  bucket_name:     "csb-reg-euw3-forecast-data-dev"
+  service_account: "sa-cr-app-wkfc-adapt-dev@prj-ceva-gr-wkfc-adapt-dev.iam.gserviceaccount.com"
+
+data:
+  # GCS path to the input CSV file
+  gcs_uri: "gs://csb-reg-euw3-forecast-data-dev/test_component_data/data-adapt_02_preprocessed_data_productivity_hourly.csv"
+  # Name of the column containing the date or datetime (e.g. "date", "timestamp", "ds")
+  date_column: "PLACEHOLDER_date_column"
+  # Name of the column containing the target value to forecast
+  target_column: "nb_um_scan_arr"
+
+training:
+  lookback_days:  90
+  half_life_days: 30
+  # L2B Prophet
+  prophet_changepoint_prior_scale: 0.1
+  # L3 LightGBM
+  lgbm_n_estimators:  1200
+  lgbm_learning_rate: 0.05
+  lgbm_num_leaves:    63
+
+evaluation:
+  forecast_horizon:      28
+  backtest_step_days:    7
+  # Start date for the rolling backtest — must be after enough history exists
+  # (needs at least lookback_days=90 days of data before this date)
+  evaluation_start_date: "2023-07-01"
