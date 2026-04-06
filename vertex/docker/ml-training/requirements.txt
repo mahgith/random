@@ -1,4 +1,0 @@
-prophet==1.1.6
-lightgbm==4.5.0
-holidays==0.67
-joblib>=1.3.0
