@@ -2,11 +2,10 @@
 GCS TRAINING PIPELINE
 =====================
 A self-contained pipeline that reads data from GCS, preprocesses it,
-trains the 3-layer forecasting model, and evaluates it against a
-constant-mean baseline.
+trains the forecasting model, and evaluates it against a constant-mean baseline.
 
-No BigQuery, no HP grid search — just the real model architecture
-running end-to-end on GCS data with fixed hyperparameters.
+Architecture: L1 (exponential recency baseline) + L2B Prophet + L3 LightGBM.
+No BigQuery, no HP grid search, no L2A multiplier table.
 
 Components
 ----------

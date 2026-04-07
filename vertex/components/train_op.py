@@ -9,23 +9,21 @@ Architecture
 Layer 1  — Exponential recency-weighted baseline
                Weights the last `lookback_days` actuals with exponential
                decay (half-life = `half_life_days`).  Pure formula, no fit.
-
-Layer 2A — Seasonal multiplier table  (week_of_year × day_of_week)
-               Ratio of actuals to the L1 baseline, averaged per calendar
-               slot.  Captures systematic weekly and seasonal patterns.
+               Result: l1_baseline (one value per training row).
 
 Layer 2B — Prophet (yearly seasonality, multiplicative)
                Adds French-holiday regressors.  Captures trend + yearly
-               seasonality beyond what L2A covers.
+               seasonality.  Output: y_structural = prophet yhat.
+               (Layer 2A / seasonal multiplier table has been removed.)
 
 Layer 3  — LightGBM log-residual correction
-               Learns the log-ratio between actuals and the structural
-               forecast (L2A × prophet_ratio).  Features are calendar
-               fields + rolling means.
+               Learns the log-ratio between actuals and the Prophet
+               structural forecast: log(y / y_structural).
+               Features: calendar fields + rolling means + l1_baseline.
+               Final prediction: y_structural × exp(lgbm_correction).
 
 Model bundle saved to model.path/:
     config.json              — hyperparameters + training metadata
-    multiplier_table.parquet — L2A lookup (week_of_year × day_of_week)
     prophet_model.pkl        — serialised Prophet model
     lgbm_model.joblib        — LightGBM model
     lgbm_features.json       — ordered feature list for L3 inference
@@ -52,7 +50,7 @@ def train_op(
     model: Output[Model],
     metrics: Output[Metrics],
 ):
-    """Fit L1 + L2A + L2B + L3 on the full dataset with fixed hyperparameters."""
+    """Fit L1 + L2B Prophet + L3 LightGBM on the full dataset with fixed hyperparameters."""
     import json
     import logging
     import os
@@ -69,10 +67,14 @@ def train_op(
     logging.getLogger("cmdstanpy").setLevel(logging.WARNING)
     logger = logging.getLogger(__name__)
 
+    # Features for L3 LightGBM
+    # l1_baseline is the recency-weighted mean — a strong short-term signal
+    # y_structural is Prophet's yhat — the trend + seasonality signal
     lgbm_features = [
         "day_of_week", "week_of_year", "month", "iso_year",
         "is_holiday", "is_pre_holiday", "is_post_holiday",
         "rolling_10", "rolling_20", "rolling_30",
+        "l1_baseline",
         "y_structural",
     ]
 
@@ -105,20 +107,16 @@ def train_op(
                 len(df), df["ds"].min().date(), df["ds"].max().date())
 
     # ── L1 — Exponential recency-weighted baseline ────────────────────────────
+    # Computes a weighted recent mean for every row.
+    # Rows before index `lookback_days` will be NaN (not enough history yet).
     df["l1_baseline"] = compute_l1(df["y"], lookback_days, half_life_days)
-    logger.info("L1 baseline computed. Valid rows: %d", int(df["l1_baseline"].notna().sum()))
-
-    # ── L2A — Seasonal multiplier table ──────────────────────────────────────
-    train_l2a = df.dropna(subset=["l1_baseline"]).copy()
-    train_l2a["ratio"] = (train_l2a["y"] / train_l2a["l1_baseline"]).clip(0.2, 3.0)
-    mult_tbl = (
-        train_l2a.groupby(["week_of_year", "day_of_week"])["ratio"]
-        .mean().reset_index().rename(columns={"ratio": "multiplier"})
-    )
-    mult_lkp = mult_tbl.set_index(["week_of_year", "day_of_week"])["multiplier"]
-    logger.info("L2A multiplier table: %d entries", len(mult_tbl))
+    logger.info("L1 baseline computed. Valid rows: %d / %d",
+                int(df["l1_baseline"].notna().sum()), len(df))
 
     # ── L2B — Prophet ─────────────────────────────────────────────────────────
+    # Prophet is trained on the full series.
+    # Its yhat becomes y_structural — the trend + yearly seasonality signal
+    # that L3 will then correct.
     prophet_df = df[["ds", "y", "is_holiday", "is_pre_holiday", "is_post_holiday"]].copy()
     prophet_mdl = Prophet(
         yearly_seasonality=True,
@@ -133,27 +131,18 @@ def train_op(
     prophet_mdl.fit(prophet_df)
     logger.info("L2B Prophet fitted")
 
-    # In-sample Prophet predictions to compute structural forecast
+    # In-sample Prophet predictions to build y_structural for each training row
     in_sample = prophet_mdl.predict(
         prophet_df[["ds", "is_holiday", "is_pre_holiday", "is_post_holiday"]]
     )
-    df = df.merge(
-        in_sample[["ds", "yhat"]].rename(columns={"yhat": "prophet_pred"}),
-        on="ds", how="left",
-    )
-
-    df["l2a_pred"] = df.apply(
-        lambda r: mult_lkp.get((int(r["week_of_year"]), int(r["day_of_week"])), 1.0)
-        * r["l1_baseline"] if pd.notna(r["l1_baseline"]) else np.nan,
-        axis=1,
-    )
-    df["prophet_ratio"] = (
-        df["prophet_pred"] / df["l2a_pred"].replace(0, np.nan)
-    ).clip(0.1, 1.8)
-    df["y_structural"] = df["l2a_pred"] * df["prophet_ratio"]
+    df["y_structural"] = in_sample["yhat"].values
+    logger.info("y_structural (Prophet yhat) computed. Min: %.2f, Max: %.2f",
+                float(df["y_structural"].min()), float(df["y_structural"].max()))
 
     # ── L3 — LightGBM log-residual correction ─────────────────────────────────
-    train_l3 = df.dropna(subset=["y_structural"] + lgbm_features).copy()
+    # Target: log(actual / prophet_structural)
+    # The model learns whatever systematic pattern Prophet missed.
+    train_l3 = df.dropna(subset=lgbm_features).copy()
     train_l3 = train_l3[train_l3["y_structural"] > 0].copy()
     train_l3["lgbm_target"] = np.log(
         train_l3["y"] / train_l3["y_structural"].clip(lower=1.0)
@@ -178,10 +167,12 @@ def train_op(
     logger.info("L3 LightGBM fitted on %d rows", n)
 
     # ── In-sample diagnostics ────────────────────────────────────────────────
-    valid = df.dropna(subset=["y_structural"] + lgbm_features).copy()
+    # These metrics are optimistic (model saw this data) but useful for
+    # a quick sanity check.
+    valid = df.dropna(subset=lgbm_features).copy()
     valid = valid[valid["y_structural"] > 0].copy()
     if len(valid) > 0:
-        X_in = valid[lgbm_features].values
+        X_in      = valid[lgbm_features].values
         y_pred_in = valid["y_structural"].values * np.exp(lgbm_mdl.predict(X_in))
         insample_wape = wape(valid["y"].values, y_pred_in)
         insample_mape = mape(valid["y"].values, y_pred_in)
@@ -192,13 +183,13 @@ def train_op(
     else:
         logger.warning("No valid rows for in-sample diagnostics")
 
-    metrics.log_metric("training_rows", len(df))
+    metrics.log_metric("training_rows",                   len(df))
     metrics.log_metric("prophet_changepoint_prior_scale", prophet_changepoint_prior_scale)
-    metrics.log_metric("lgbm_n_estimators", lgbm_n_estimators)
-    metrics.log_metric("lgbm_learning_rate", lgbm_learning_rate)
-    metrics.log_metric("lgbm_num_leaves", lgbm_num_leaves)
+    metrics.log_metric("lgbm_n_estimators",               lgbm_n_estimators)
+    metrics.log_metric("lgbm_learning_rate",               lgbm_learning_rate)
+    metrics.log_metric("lgbm_num_leaves",                  lgbm_num_leaves)
 
-    # ── Save model bundle ────────────────────────────────────────────────────
+    # ── Save model bundle ─────────────────────────────────────────────────────
     os.makedirs(model.path, exist_ok=True)
 
     config = {
@@ -213,8 +204,6 @@ def train_op(
     }
     with open(os.path.join(model.path, "config.json"), "w") as f:
         json.dump(config, f, indent=2)
-
-    mult_tbl.to_parquet(os.path.join(model.path, "multiplier_table.parquet"), index=False)
 
     with open(os.path.join(model.path, "prophet_model.pkl"), "wb") as f:
         pickle.dump(prophet_mdl, f)

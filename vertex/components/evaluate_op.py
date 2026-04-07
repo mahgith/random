@@ -17,15 +17,16 @@ Backtest procedure
 ------------------
 For each cutoff in [evaluation_start_date … data_end – horizon]:
   1. Compute L1 exponential baseline from history before the cutoff
-  2. Look up L2A multipliers from the saved table
-  3. Apply saved L2B Prophet model
-  4. Apply saved L3 LightGBM correction
-  5. Also compute constant-mean prediction (mean of last `lookback_days`)
-  6. Record predictions + actuals for the next `forecast_horizon` days
+  2. Apply saved L2B Prophet model to predict the next `forecast_horizon` days
+     → y_structural = prophet yhat
+  3. Apply saved L3 LightGBM correction
+     → final_pred = y_structural × exp(lgbm_correction)
+  4. Compute constant-mean baseline: mean(last lookback_days actuals)
+  5. Compare both against the real actuals
 
 Metrics reported
 ----------------
-Logged per forecast-week bucket (W1 = days 1-7, W2 = 8-14, …):
+Per forecast-week bucket (W1 = days 1-7, W2 = 8-14, W3 = 15-21, W4 = 22-28):
     wape_W1..W4, mape_W1..W4
 
 Overall:
@@ -33,8 +34,8 @@ Overall:
     mean_mape_model      — 3-layer model MAPE
     mean_wape_baseline   — constant-mean baseline WAPE
     mean_mape_baseline   — constant-mean baseline MAPE
-    wape_lift            — (baseline_wape - model_wape) / baseline_wape
-    mape_lift            — same for MAPE
+    wape_lift_pct        — (baseline_wape - model_wape) / baseline_wape × 100
+    mape_lift_pct        — same for MAPE
     backtest_cutoffs     — number of cutoffs evaluated
 """
 
@@ -55,7 +56,7 @@ def evaluate_op(
     evaluation_metrics: Output[Metrics],
 ):
     """
-    Rolling backtest comparing the 3-layer model vs a constant-mean baseline.
+    Rolling backtest comparing L1+Prophet+LightGBM vs a constant-mean baseline.
     Logs WAPE/MAPE per forecast-week bucket and overall lift over baseline.
     """
     import json
@@ -81,9 +82,6 @@ def evaluate_op(
 
     with open(os.path.join(model.path, "config.json")) as f:
         cfg = json.load(f)
-
-    mult_tbl   = pd.read_parquet(os.path.join(model.path, "multiplier_table.parquet"))
-    mult_lkp   = mult_tbl.set_index(["week_of_year", "day_of_week"])["multiplier"]
 
     with open(os.path.join(model.path, "prophet_model.pkl"), "rb") as f:
         prophet_mdl = pickle.load(f)
@@ -112,46 +110,53 @@ def evaluate_op(
         return result
 
     def predict_model(cutoff: pd.Timestamp, horizon_dates: list) -> np.ndarray:
+        """
+        Predict the next `forecast_horizon` days using L1 + Prophet + LightGBM.
+
+        At each cutoff we only use data up to that date — no future leakage.
+        """
         history = df[df["ds"] <= cutoff].tail(lookback_days)
         if len(history) < 2:
             return np.full(len(horizon_dates), np.nan)
+
+        # L1: single weighted-mean value from recent history
         l1_val = float(np.dot(history["y"].values,
                               exp_weights(len(history), half_life_days)))
 
+        # Reindex to get calendar/holiday features for the forecast horizon
         fdf = df_idx.reindex(horizon_dates).copy()
         fdf["ds"] = horizon_dates
 
-        fdf["l2a_pred"] = l1_val * fdf.apply(
-            lambda r: mult_lkp.get((int(r["week_of_year"]), int(r["day_of_week"])), 1.0),
-            axis=1,
-        )
-
+        # L2B Prophet: predict the structural forecast for each horizon date
         prophet_in = pd.DataFrame({
             "ds":              horizon_dates,
             "is_holiday":      fdf["is_holiday"].fillna(0).values,
             "is_pre_holiday":  fdf["is_pre_holiday"].fillna(0).values,
             "is_post_holiday": fdf["is_post_holiday"].fillna(0).values,
         })
-        fdf["prophet_pred"] = prophet_mdl.predict(prophet_in)["yhat"].values
-        fdf["prophet_ratio"] = (
-            fdf["prophet_pred"] / fdf["l2a_pred"].replace(0, np.nan)
-        ).clip(0.1, 1.8)
-        fdf["y_structural"] = fdf["l2a_pred"] * fdf["prophet_ratio"]
+        fdf["y_structural"] = prophet_mdl.predict(prophet_in)["yhat"].values
 
+        # L1 baseline: same value for all horizon dates (constant recent mean)
+        fdf["l1_baseline"] = l1_val
+
+        # Rolling stats at prediction time: use actuals up to cutoff
         for win in (10, 20, 30):
             recent = df[df["ds"] <= cutoff]["y"].tail(win)
             fdf[f"rolling_{win}"] = recent.mean() if len(recent) > 0 else l1_val
 
+        # L3 LightGBM: log-residual correction on top of Prophet
         log_corr = lgbm_mdl.predict(fdf[lgbm_features].fillna(0).values)
         return fdf["y_structural"].values * np.exp(log_corr)
 
-    def predict_baseline(cutoff: pd.Timestamp, horizon_dates: list) -> np.ndarray:
-        """Constant-mean baseline: mean of the last `lookback_days` actuals."""
+    def predict_baseline(cutoff: pd.Timestamp, n: int) -> np.ndarray:
+        """
+        Constant-mean baseline: mean of the last `lookback_days` actuals.
+        Predicts the same value for every horizon day.
+        """
         history = df[df["ds"] <= cutoff].tail(lookback_days)
         if len(history) < 1:
-            return np.full(len(horizon_dates), np.nan)
-        constant = float(history["y"].mean())
-        return np.full(len(horizon_dates), constant)
+            return np.full(n, np.nan)
+        return np.full(n, float(history["y"].mean()))
 
     # ── Rolling backtest ──────────────────────────────────────────────────────
     eval_start  = pd.Timestamp(evaluation_start_date)
@@ -180,7 +185,7 @@ def evaluate_op(
             continue
 
         preds_model    = predict_model(cutoff, horizon_dates)
-        preds_baseline = predict_baseline(cutoff, horizon_dates)
+        preds_baseline = predict_baseline(cutoff, forecast_horizon)
 
         for h_idx, hd in enumerate(horizon_dates, start=1):
             if hd not in df_idx.index:
