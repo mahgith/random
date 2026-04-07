@@ -54,7 +54,6 @@ def train_op(
     import json
     import logging
     import os
-    import pickle
     import sys
     import traceback
 
@@ -73,6 +72,7 @@ def train_op(
         import pandas as pd
         logger.info("  pandas OK")
         from prophet import Prophet
+        from prophet.serialize import model_to_json
         logger.info("  prophet OK")
     except Exception as e:
         logger.error("Import failed: %s", e)
@@ -220,9 +220,9 @@ def train_op(
             json.dump(config, f, indent=2)
         logger.info("Saved config.json")
 
-        with open(os.path.join(model.path, "prophet_model.pkl"), "wb") as f:
-            pickle.dump(prophet_mdl, f)
-        logger.info("Saved prophet_model.pkl")
+        with open(os.path.join(model.path, "prophet_model.json"), "w") as f:
+            f.write(model_to_json(prophet_mdl))
+        logger.info("Saved prophet_model.json")
 
         joblib.dump(lgbm_mdl, os.path.join(model.path, "lgbm_model.joblib"))
         logger.info("Saved lgbm_model.joblib")

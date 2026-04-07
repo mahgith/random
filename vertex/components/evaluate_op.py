@@ -62,7 +62,6 @@ def evaluate_op(
     import json
     import logging
     import os
-    import pickle
 
     import joblib
     import numpy as np
@@ -83,8 +82,9 @@ def evaluate_op(
     with open(os.path.join(model.path, "config.json")) as f:
         cfg = json.load(f)
 
-    with open(os.path.join(model.path, "prophet_model.pkl"), "rb") as f:
-        prophet_mdl = pickle.load(f)
+    from prophet.serialize import model_from_json
+    with open(os.path.join(model.path, "prophet_model.json")) as f:
+        prophet_mdl = model_from_json(f.read())
 
     lgbm_mdl      = joblib.load(os.path.join(model.path, "lgbm_model.joblib"))
     lgbm_features = json.load(open(os.path.join(model.path, "lgbm_features.json")))
