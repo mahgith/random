@@ -63,18 +63,6 @@ def evaluate_op(
     import logging
     import os
 
-    # Set cmdstan path before importing Prophet
-    try:
-        import cmdstanpy
-        cmdstan_path_file = "/opt/cmdstan_dir.txt"
-        if os.path.exists(cmdstan_path_file):
-            with open(cmdstan_path_file) as f:
-                cmdstan_dir = f.read().strip()
-            if cmdstan_dir:
-                cmdstanpy.set_cmdstan_path(cmdstan_dir)
-    except Exception:
-        pass
-
     import joblib
     import numpy as np
     import pandas as pd
