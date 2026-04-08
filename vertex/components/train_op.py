@@ -152,7 +152,7 @@ def train_op(
         # L3 LightGBM
         p("fitting LightGBM...")
         train_l3 = df.dropna(subset=lgbm_features).copy()
-        train_l3 = train_l3[train_l3["y_structural"] > 0].copy()
+        train_l3 = train_l3[(train_l3["y_structural"] > 0) & (train_l3["y"] > 0)].copy()
         train_l3["lgbm_target"] = np.log(
             train_l3["y"] / train_l3["y_structural"].clip(lower=1.0)
         )
