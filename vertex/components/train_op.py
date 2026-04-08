@@ -148,6 +148,12 @@ def train_op(
         yl = train_l3["lgbm_target"].values
         sw = exp_weights(n, half_life=60)
 
+        # Data diagnostics before fit
+        p(f"X shape: {X.shape}  dtype: {X.dtype}")
+        p(f"y shape: {yl.shape}  dtype: {yl.dtype}")
+        p(f"NaN in X: {int(np.isnan(X).sum())}  Inf in X: {int(np.isinf(X).sum())}")
+        p(f"NaN in y: {int(np.isnan(yl).sum())}  Inf in y: {int(np.isinf(yl).sum())}")
+
         lgbm_mdl = lgb.LGBMRegressor(
             n_estimators=lgbm_n_estimators,
             learning_rate=lgbm_learning_rate,
