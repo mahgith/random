@@ -40,9 +40,22 @@ def train_op(
     import sys
     import traceback
 
+    # Write debug log to GCS so we can always find it regardless of Cloud Logging
+    _debug_log = []
+    _debug_gcs_path = "gs://csb-reg-euw3-forecast-data-dev/debug/train_op_debug.txt"
+
     def p(msg):
-        """Always prints to stdout and flushes — guaranteed to appear in Cloud Logging."""
         print(msg, flush=True)
+        _debug_log.append(msg)
+
+    def flush_debug_to_gcs():
+        try:
+            import gcsfs
+            fs = gcsfs.GCSFileSystem()
+            with fs.open(_debug_gcs_path, "w") as f:
+                f.write("\n".join(_debug_log))
+        except Exception as e:
+            print(f"[debug flush failed: {e}]", flush=True)
 
     p("=== train_op started ===")
 
@@ -134,6 +147,8 @@ def train_op(
         df["y_structural"] = in_sample["yhat"].values
         p(f"y_structural: min={df['y_structural'].min():.2f}  max={df['y_structural'].max():.2f}")
 
+        flush_debug_to_gcs()  # checkpoint: prophet done
+
         # L3 LightGBM
         p("fitting LightGBM...")
         train_l3 = df.dropna(subset=lgbm_features).copy()
@@ -219,9 +234,15 @@ def train_op(
 
         model.metadata.update({k: str(v) for k, v in config.items()})
         p("=== train_op complete ===")
+        flush_debug_to_gcs()
 
     except Exception as e:
         p(f"TRAINING ERROR: {e}")
         traceback.print_exc(file=sys.stdout)
-        sys.stdout.flush()
+        _debug_log.append(f"TRAINING ERROR: {e}")
+        import io
+        tb_buf = io.StringIO()
+        traceback.print_exc(file=tb_buf)
+        _debug_log.append(tb_buf.getvalue())
+        flush_debug_to_gcs()
         raise
