@@ -46,6 +46,27 @@ def train_op(
 
     p("=== train_op started ===")
 
+    # ── Set cmdstan path before importing Prophet ─────────────────────────────
+    # cmdstanpy.install_cmdstan() during Docker build writes the exact versioned
+    # path (e.g. /opt/cmdstan/cmdstan-2.35.0) to /opt/cmdstan_dir.txt.
+    # We read that file and call set_cmdstan_path() so Prophet finds cmdstan
+    # regardless of which user the container runs as at runtime.
+    try:
+        import cmdstanpy
+        cmdstan_path_file = "/opt/cmdstan_dir.txt"
+        if os.path.exists(cmdstan_path_file):
+            with open(cmdstan_path_file) as f:
+                cmdstan_dir = f.read().strip()
+            if cmdstan_dir:
+                cmdstanpy.set_cmdstan_path(cmdstan_dir)
+                p(f"cmdstan path set to: {cmdstan_dir}")
+            else:
+                p("WARNING: /opt/cmdstan_dir.txt is empty")
+        else:
+            p("WARNING: /opt/cmdstan_dir.txt not found — Prophet may fail")
+    except Exception as e:
+        p(f"WARNING: could not set cmdstan path: {e}")
+
     # ── Imports — logged one by one so we know exactly which one fails ────────
     try:
         p("importing joblib...")
