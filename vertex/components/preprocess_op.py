@@ -73,6 +73,11 @@ def preprocess_op(
 
     df = df.rename(columns={date_column: "ds", target_column: "y"})
     df["ds"] = pd.to_datetime(df["ds"])
+    logger.info("Raw y stats: min=%.2f  max=%.2f  mean=%.2f  zeros=%d  nulls=%d",
+                df["y"].min(), df["y"].max(), df["y"].mean(),
+                int((df["y"] == 0).sum()), int(df["y"].isna().sum()))
+    logger.info("Raw date range: %s – %s  unique dates: %d",
+                df["ds"].min(), df["ds"].max(), df["ds"].dt.normalize().nunique())
 
     # ── 5-hour backward shift ─────────────────────────────────────────────────
     # Activity between 00:00 and 04:59 belongs to the previous business day.
@@ -85,6 +90,9 @@ def preprocess_op(
     daily = daily.sort_values("ds").reset_index(drop=True)
     logger.info("Aggregated to %d daily rows (date range: %s – %s)",
                 len(daily), daily["ds"].min().date(), daily["ds"].max().date())
+    logger.info("Daily y stats: min=%.2f  max=%.2f  mean=%.2f  zeros=%d",
+                daily["y"].min(), daily["y"].max(), daily["y"].mean(),
+                int((daily["y"] == 0).sum()))
 
     # ── Filter by data_start_date ─────────────────────────────────────────────
     start = pd.Timestamp(data_start_date)
@@ -98,6 +106,9 @@ def preprocess_op(
     before_count = len(daily)
     daily = daily[daily["ds"].dt.dayofweek < 5].reset_index(drop=True)
     logger.info("Dropped weekends: kept %d / %d rows", len(daily), before_count)
+    logger.info("After weekend drop: zeros=%d / %d  (%.1f%%)",
+                int((daily["y"] == 0).sum()), len(daily),
+                100 * (daily["y"] == 0).sum() / max(len(daily), 1))
 
     # ── French public holidays ────────────────────────────────────────────────
     years = daily["ds"].dt.year.unique().tolist()
