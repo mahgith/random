@@ -120,6 +120,9 @@ def evaluate_op(
             fdf = df_idx.reindex(horizon_dates).copy()
             fdf["ds"] = horizon_dates
 
+            # Holidays: predict 0 directly (LightGBM was not trained on holidays)
+            is_hol = fdf["is_holiday"].fillna(0).values.astype(bool)
+
             prophet_in = pd.DataFrame({"ds": horizon_dates})
             fdf["prophet_yhat"] = prophet_mdl.predict(prophet_in)["yhat"].values
             fdf["l1_baseline"]  = l1_val
@@ -136,7 +139,10 @@ def evaluate_op(
                 fdf[f"rolling_{win}"] = recent.mean() if len(recent) > 0 else l1_val
 
             log_corr = lgbm_mdl.predict(fdf[lgbm_features].fillna(0).values)
-            return fdf["y_structural"].values * np.exp(log_corr)
+            preds = fdf["y_structural"].values * np.exp(log_corr)
+            # Zero out holiday predictions — warehouse is closed
+            preds[is_hol] = 0.0
+            return preds
 
         def predict_baseline(cutoff: pd.Timestamp, n: int) -> np.ndarray:
             # Baseline also excludes holidays for a fair comparison

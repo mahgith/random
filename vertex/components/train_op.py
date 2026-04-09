@@ -174,11 +174,22 @@ def train_op(
         # L3 LightGBM
         p("fitting LightGBM...")
         train_l3 = df.dropna(subset=lgbm_features).copy()
-        train_l3 = train_l3[(train_l3["y_structural"] > 0) & (train_l3["y"] > 0)].copy()
+        # Exclude holidays: their y_structural is unreliable (near-zero L1 * low ratio)
+        # and log(y / tiny_y_structural) produces extreme targets that corrupt the model
+        train_l3 = train_l3[
+            (train_l3["y_structural"] > 0)
+            & (train_l3["y"] > 0)
+            & (train_l3["is_holiday"] == 0)
+        ].copy()
         train_l3["lgbm_target"] = np.log(
             train_l3["y"] / (train_l3["y_structural"] + eps)
         )
-        p(f"LightGBM training rows: {len(train_l3)}")
+        p(f"LightGBM training rows: {len(train_l3)} "
+          f"(dropped {int((df['is_holiday'] == 1).sum())} holidays)")
+        p(f"lgbm_target stats: min={train_l3['lgbm_target'].min():.4f}  "
+          f"max={train_l3['lgbm_target'].max():.4f}  "
+          f"mean={train_l3['lgbm_target'].mean():.4f}  "
+          f"std={train_l3['lgbm_target'].std():.4f}")
 
         n  = len(train_l3)
         X  = train_l3[lgbm_features].values
