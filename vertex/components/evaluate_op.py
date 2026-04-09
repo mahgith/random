@@ -66,6 +66,9 @@ def evaluate_op(
         df["ds"] = pd.to_datetime(df["ds"])
         df = df.sort_values("ds").reset_index(drop=True)
         p(f"loaded {len(df)} rows | date range: {df['ds'].min().date()} – {df['ds'].max().date()}")
+        p(f"y stats: min={df['y'].min():.2f}  max={df['y'].max():.2f}  "
+          f"mean={df['y'].mean():.2f}  zeros={int((df['y'] == 0).sum())}  "
+          f"nulls={int(df['y'].isna().sum())}")
 
         # ── Load model bundle ─────────────────────────────────────────────────
         p(f"loading model bundle from: {model.path}")

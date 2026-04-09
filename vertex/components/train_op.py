@@ -129,6 +129,10 @@ def train_op(
         df = df.sort_values("ds").reset_index(drop=True)
         p(f"loaded {len(df)} rows | columns: {list(df.columns)}")
         p(f"date range: {df['ds'].min().date()} – {df['ds'].max().date()}")
+        p(f"y stats: min={df['y'].min():.2f}  max={df['y'].max():.2f}  "
+          f"mean={df['y'].mean():.2f}  zeros={int((df['y'] == 0).sum())}  "
+          f"nulls={int(df['y'].isna().sum())}")
+        p(f"y head: {df['y'].head(10).tolist()}")
 
         # L1 baseline (holidays excluded from lookback so they don't deflate the level)
         p("computing L1 baseline...")
