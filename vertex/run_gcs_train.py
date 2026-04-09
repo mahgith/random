@@ -67,6 +67,7 @@ def load_params(params_file: Path) -> dict:
         "gcs_uri":         data["gcs_uri"],
         "date_column":     date_column,
         "target_column":   data["target_column"],
+        "warehouse_id":    data.get("warehouse_id", "GENNEVILLIERS"),
         # training
         "lookback_days":                   int(train["lookback_days"]),
         "half_life_days":                  int(train["half_life_days"]),

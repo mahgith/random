@@ -19,6 +19,8 @@ data:
   date_column: "PLACEHOLDER_date_column"
   # Name of the column containing the target value to forecast
   target_column: "nb_um_scan_arr"
+  # Warehouse to filter on (column 'warehouse_id' in the CSV)
+  warehouse_id: "GENNEVILLIERS"
 
 training:
   lookback_days:  90

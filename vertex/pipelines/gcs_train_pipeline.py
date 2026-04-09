@@ -39,6 +39,7 @@ def gcs_train_pipeline(
     gcs_uri: str,
     date_column: str,
     target_column: str,
+    warehouse_id: str = "GENNEVILLIERS",
     # ── L1 params ────────────────────────────────────────────────────────────
     lookback_days: int = 90,
     half_life_days: int = 30,
@@ -59,11 +60,12 @@ def gcs_train_pipeline(
         gcs_uri=gcs_uri,
     )
 
-    # Step 2 — preprocess: rename, aggregate daily, add features
+    # Step 2 — preprocess: filter warehouse, apply 5h shift, aggregate daily, add features
     preprocess_task = preprocess_op(
         raw_data=read_task.outputs["raw_data"],
         date_column=date_column,
         target_column=target_column,
+        warehouse_id=warehouse_id,
     )
 
     # Step 3 — train 3-layer model with fixed hyperparameters

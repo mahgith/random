@@ -6,11 +6,14 @@ features required by the 3-layer model.
 
 What it does
 ------------
-1. Renames `date_column` → ds,  `target_column` → y
-2. Aggregates to daily resolution (sum) — handles hourly or sub-daily input
-3. Adds French public-holiday flags: is_holiday, is_pre_holiday, is_post_holiday
-4. Adds ISO calendar features: week_of_year, day_of_week, month, iso_year
-5. Adds rolling statistics (shifted by 1 to prevent leakage):
+1. Filters to the specified warehouse_id (column 'warehouse_id')
+2. Renames `date_column` → ds,  `target_column` → y
+3. Applies a 5-hour backward shift to datetimes so that activity between
+   midnight and 05:00 is attributed to the previous calendar day
+4. Aggregates to daily resolution (sum) — handles hourly or sub-daily input
+5. Adds French public-holiday flags: is_holiday, is_pre_holiday, is_post_holiday
+6. Adds ISO calendar features: week_of_year, day_of_week, month, iso_year
+7. Adds rolling statistics (shifted by 1 to prevent leakage):
        rolling_10, rolling_20, rolling_30
 
 Output schema (parquet):
@@ -38,6 +41,7 @@ def preprocess_op(
     raw_data: Input[Dataset],
     date_column: str,
     target_column: str,
+    warehouse_id: str,
     processed_data: Output[Dataset],
 ):
     """Add calendar, holiday, and rolling features to the daily time series."""
@@ -52,6 +56,14 @@ def preprocess_op(
     df = pd.read_parquet(raw_data.path + ".parquet")
     logger.info("Loaded %d rows. Columns: %s", len(df), list(df.columns))
 
+    # ── Filter by warehouse ───────────────────────────────────────────────────
+    if "warehouse_id" not in df.columns:
+        raise ValueError(f"Column 'warehouse_id' not found. Available: {list(df.columns)}")
+    df = df[df["warehouse_id"] == warehouse_id].copy()
+    logger.info("After warehouse_id filter ('%s'): %d rows", warehouse_id, len(df))
+    if len(df) == 0:
+        raise ValueError(f"No rows remain after filtering warehouse_id == '{warehouse_id}'")
+
     # ── Rename and parse ──────────────────────────────────────────────────────
     if date_column not in df.columns:
         raise ValueError(f"date_column '{date_column}' not found. Available: {list(df.columns)}")
@@ -60,6 +72,11 @@ def preprocess_op(
 
     df = df.rename(columns={date_column: "ds", target_column: "y"})
     df["ds"] = pd.to_datetime(df["ds"])
+
+    # ── 5-hour backward shift ─────────────────────────────────────────────────
+    # Activity between 00:00 and 04:59 belongs to the previous business day.
+    df["ds"] = df["ds"] - pd.Timedelta(hours=5)
+    logger.info("Applied -5 h shift to datetimes")
 
     # ── Aggregate to daily (sum) ──────────────────────────────────────────────
     df["ds"] = df["ds"].dt.normalize()
