@@ -83,8 +83,6 @@ def gcs_train_pipeline(
     evaluate_task = evaluate_op(  # noqa: F841
         processed_data=preprocess_task.outputs["processed_data"],
         model=train_task.outputs["model"],
-        lookback_days=lookback_days,
-        half_life_days=half_life_days,
         forecast_horizon=forecast_horizon,
         backtest_step_days=backtest_step_days,
         evaluation_start_date=evaluation_start_date,

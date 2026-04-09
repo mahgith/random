@@ -14,8 +14,6 @@ _ML_TRAINING_IMAGE = "europe-west3-docker.pkg.dev/prj-ceva-gr-wkfc-adapt-dev/gr-
 def evaluate_op(
     processed_data: Input[Dataset],
     model: Input[Model],
-    lookback_days: int,
-    half_life_days: int,
     forecast_horizon: int,
     backtest_step_days: int,
     evaluation_start_date: str,
@@ -73,6 +71,8 @@ def evaluate_op(
         p(f"loading model bundle from: {model.path}")
         with open(os.path.join(model.path, "config.json")) as f:
             cfg = json.load(f)
+        lookback_days  = cfg["lookback_days"]
+        half_life_days = cfg["half_life_days"]
         p(f"config: {cfg}")
 
         with open(os.path.join(model.path, "prophet_model.json")) as f:
