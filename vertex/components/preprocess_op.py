@@ -88,11 +88,16 @@ def preprocess_op(
 
     # ── Filter by data_start_date ─────────────────────────────────────────────
     start = pd.Timestamp(data_start_date)
-    before = len(daily)
+    before_count = len(daily)
     daily = daily[daily["ds"] >= start].reset_index(drop=True)
-    logger.info("Filtered to >= %s: kept %d / %d rows", data_start_date, len(daily), before)
+    logger.info("Filtered to >= %s: kept %d / %d rows", data_start_date, len(daily), before_count)
     if len(daily) == 0:
         raise ValueError(f"No rows remain after filtering ds >= '{data_start_date}'")
+
+    # ── Drop weekends (warehouse operates Mon-Fri only) ──────────────────────
+    before_count = len(daily)
+    daily = daily[daily["ds"].dt.dayofweek < 5].reset_index(drop=True)
+    logger.info("Dropped weekends: kept %d / %d rows", len(daily), before_count)
 
     # ── French public holidays ────────────────────────────────────────────────
     years = daily["ds"].dt.year.unique().tolist()
@@ -106,10 +111,10 @@ def preprocess_op(
 
     pre_holiday_dates: set = set()
     post_holiday_dates: set = set()
-    workdays = daily["ds"].tolist()
+    non_holiday_days = daily.loc[daily["is_holiday"] == 0, "ds"].tolist()
     for h in fr_holidays_set:
-        before = [d for d in workdays if d < h]
-        after  = [d for d in workdays if d > h]
+        before = [d for d in non_holiday_days if d < h]
+        after  = [d for d in non_holiday_days if d > h]
         if before:
             pre_holiday_dates.add(max(before))
         if after:
@@ -129,10 +134,13 @@ def preprocess_op(
     daily["day_of_week"]  = daily["ds"].dt.dayofweek   # 0 = Monday
     daily["month"]        = daily["ds"].dt.month
 
-    # ── Rolling statistics (shifted by 1 to avoid leakage) ───────────────────
+    # ── Rolling statistics (shifted by 1, holidays excluded) ────────────────
+    # Use only non-holiday volume so that near-zero holiday days don't dilute
+    # the rolling mean which represents the normal workday demand level.
+    workday_y = daily["y"].where(daily["is_holiday"] == 0)
     for window in (10, 20, 30):
         daily[f"rolling_{window}"] = (
-            daily["y"].shift(1).rolling(window, min_periods=1).mean()
+            workday_y.shift(1).rolling(window, min_periods=1).mean()
         )
 
     logger.info("Preprocessing complete. Shape: %s. Columns: %s",

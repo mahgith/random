@@ -106,11 +106,13 @@ def evaluate_op(
             return result
 
         def predict_model(cutoff: pd.Timestamp, horizon_dates: list) -> np.ndarray:
-            history = df[df["ds"] <= cutoff].tail(lookback_days)
-            if len(history) < 2:
+            # L1 baseline: exclude holidays so near-zero days don't deflate the level
+            hist = df[df["ds"] <= cutoff].tail(lookback_days)
+            hist_workdays = hist[hist["is_holiday"] == 0]
+            if len(hist_workdays) < 2:
                 return np.full(len(horizon_dates), np.nan)
-            l1_val = float(np.dot(history["y"].values,
-                                  exp_weights(len(history), half_life_days)))
+            l1_val = float(np.dot(hist_workdays["y"].values,
+                                  exp_weights(len(hist_workdays), half_life_days)))
 
             fdf = df_idx.reindex(horizon_dates).copy()
             fdf["ds"] = horizon_dates
@@ -130,18 +132,20 @@ def evaluate_op(
             fdf["clipped_ratio"] = fdf["raw_ratio"].clip(lower=clip_min_ratio, upper=clip_max_ratio)
             fdf["y_structural"]  = l1_val * fdf["clipped_ratio"]
 
+            # Rolling stats: exclude holidays to reflect normal workday demand level
             for win in (10, 20, 30):
-                recent = df[df["ds"] <= cutoff]["y"].tail(win)
+                recent = df[(df["ds"] <= cutoff) & (df["is_holiday"] == 0)]["y"].tail(win)
                 fdf[f"rolling_{win}"] = recent.mean() if len(recent) > 0 else l1_val
 
             log_corr = lgbm_mdl.predict(fdf[lgbm_features].fillna(0).values)
             return fdf["y_structural"].values * np.exp(log_corr)
 
         def predict_baseline(cutoff: pd.Timestamp, n: int) -> np.ndarray:
-            history = df[df["ds"] <= cutoff].tail(lookback_days)
-            if len(history) < 1:
+            # Baseline also excludes holidays for a fair comparison
+            hist = df[(df["ds"] <= cutoff) & (df["is_holiday"] == 0)].tail(lookback_days)
+            if len(hist) < 1:
                 return np.full(n, np.nan)
-            return np.full(n, float(history["y"].mean()))
+            return np.full(n, float(hist["y"].mean()))
 
         # ── Rolling backtest ──────────────────────────────────────────────────
         eval_start  = pd.Timestamp(evaluation_start_date)

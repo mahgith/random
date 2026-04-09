@@ -89,11 +89,18 @@ def train_op(
         w     = np.exp(-decay * (n - 1 - idx))
         return w / w.sum()
 
-    def compute_l1(series_y: "pd.Series", lb: int, hl: int) -> "np.ndarray":
+    def compute_l1(series_y: "pd.Series", holiday_mask: "pd.Series", lb: int, hl: int) -> "np.ndarray":
+        """Exponential recency-weighted baseline, excluding holidays from lookback."""
         baselines = np.full(len(series_y), np.nan)
         vals = series_y.values
-        for i in range(lb, len(vals)):
-            baselines[i] = float(np.dot(vals[i - lb: i], exp_weights(lb, hl)))
+        is_hol = holiday_mask.values.astype(bool)
+        for i in range(1, len(vals)):
+            window_vals = vals[max(0, i - lb): i]
+            window_hol  = is_hol[max(0, i - lb): i]
+            non_hol = window_vals[~window_hol]
+            if len(non_hol) < 2:
+                continue
+            baselines[i] = float(np.dot(non_hol, exp_weights(len(non_hol), hl)))
         return baselines
 
     def wape(y_true: "np.ndarray", y_pred: "np.ndarray") -> float:
@@ -123,9 +130,9 @@ def train_op(
         p(f"loaded {len(df)} rows | columns: {list(df.columns)}")
         p(f"date range: {df['ds'].min().date()} – {df['ds'].max().date()}")
 
-        # L1 baseline
+        # L1 baseline (holidays excluded from lookback so they don't deflate the level)
         p("computing L1 baseline...")
-        df["l1_baseline"] = compute_l1(df["y"], lookback_days, half_life_days)
+        df["l1_baseline"] = compute_l1(df["y"], df["is_holiday"], lookback_days, half_life_days)
         p(f"L1 done. valid rows: {int(df['l1_baseline'].notna().sum())} / {len(df)}")
 
         # L2B Prophet
