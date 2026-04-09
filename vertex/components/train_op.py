@@ -135,12 +135,12 @@ def train_op(
         df["l1_baseline"] = compute_l1(df["y"], df["is_holiday"], lookback_days, half_life_days)
         p(f"L1 done. valid rows: {int(df['l1_baseline'].notna().sum())} / {len(df)}")
 
-        # L2B Prophet
+        # L2 Prophet
         p("fitting Prophet...")
         import logging
         logging.getLogger("prophet").setLevel(logging.WARNING)
         logging.getLogger("cmdstanpy").setLevel(logging.WARNING)
-        prophet_df = df[["ds", "y", "is_holiday", "is_pre_holiday", "is_post_holiday"]].copy()
+        prophet_df = df[["ds", "y"]].copy()
         prophet_mdl = Prophet(
             yearly_seasonality=True,
             weekly_seasonality=False,
@@ -148,15 +148,11 @@ def train_op(
             seasonality_mode="multiplicative",
             changepoint_prior_scale=prophet_changepoint_prior_scale,
         )
-        prophet_mdl.add_regressor("is_holiday",      standardize=False)
-        prophet_mdl.add_regressor("is_pre_holiday",  standardize=False)
-        prophet_mdl.add_regressor("is_post_holiday", standardize=False)
+        prophet_mdl.add_country_holidays(country_name="FR")
         prophet_mdl.fit(prophet_df)
         p("Prophet fitted")
 
-        in_sample = prophet_mdl.predict(
-            prophet_df[["ds", "is_holiday", "is_pre_holiday", "is_post_holiday"]]
-        )
+        in_sample = prophet_mdl.predict(prophet_df[["ds"]])
         df["prophet_yhat"] = in_sample["yhat"].values
         p(f"prophet_yhat: min={df['prophet_yhat'].min():.2f}  max={df['prophet_yhat'].max():.2f}")
 

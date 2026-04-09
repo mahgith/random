@@ -117,12 +117,7 @@ def evaluate_op(
             fdf = df_idx.reindex(horizon_dates).copy()
             fdf["ds"] = horizon_dates
 
-            prophet_in = pd.DataFrame({
-                "ds":              horizon_dates,
-                "is_holiday":      fdf["is_holiday"].fillna(0).values,
-                "is_pre_holiday":  fdf["is_pre_holiday"].fillna(0).values,
-                "is_post_holiday": fdf["is_post_holiday"].fillna(0).values,
-            })
+            prophet_in = pd.DataFrame({"ds": horizon_dates})
             fdf["prophet_yhat"] = prophet_mdl.predict(prophet_in)["yhat"].values
             fdf["l1_baseline"]  = l1_val
 

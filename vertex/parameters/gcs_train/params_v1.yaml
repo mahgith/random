@@ -28,7 +28,7 @@ training:
   lookback_days:  90
   half_life_days: 30
   # L2 Prophet — constrained by L1 via ratio clipping
-  prophet_changepoint_prior_scale: 0.1
+  prophet_changepoint_prior_scale: 0.7
   # Ratio bounds: Prophet is clamped to [clip_min_ratio, clip_max_ratio] × L1 baseline
   clip_min_ratio: 0.1
   clip_max_ratio: 1.8
