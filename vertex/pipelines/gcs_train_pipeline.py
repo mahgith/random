@@ -31,7 +31,7 @@ from components.evaluate_op   import evaluate_op
 
 @dsl.pipeline(
     name="gcs-train-pipeline",
-    description="3-layer forecasting model (L1+L2A+L2B+L3) trained on GCS data with fixed hyperparameters",
+    description="3-layer forecasting model (L1+L2 Prophet constrained by L1+L3 LightGBM) trained on GCS data",
 )
 def gcs_train_pipeline(
     # ── Data ─────────────────────────────────────────────────────────────────
@@ -43,8 +43,10 @@ def gcs_train_pipeline(
     # ── L1 params ────────────────────────────────────────────────────────────
     lookback_days: int = 90,
     half_life_days: int = 30,
-    # ── L2B Prophet ───────────────────────────────────────────────────────────
+    # ── L2 Prophet (constrained by L1) ──────────────────────────────────────
     prophet_changepoint_prior_scale: float = 0.1,
+    clip_min_ratio: float = 0.1,
+    clip_max_ratio: float = 1.8,
     # ── L3 LightGBM ──────────────────────────────────────────────────────────
     lgbm_n_estimators: int = 1200,
     lgbm_learning_rate: float = 0.05,
@@ -74,6 +76,8 @@ def gcs_train_pipeline(
         lookback_days=lookback_days,
         half_life_days=half_life_days,
         prophet_changepoint_prior_scale=prophet_changepoint_prior_scale,
+        clip_min_ratio=clip_min_ratio,
+        clip_max_ratio=clip_max_ratio,
         lgbm_n_estimators=lgbm_n_estimators,
         lgbm_learning_rate=lgbm_learning_rate,
         lgbm_num_leaves=lgbm_num_leaves,

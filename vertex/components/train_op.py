@@ -6,9 +6,10 @@ Step 3 — Fits the 3-layer forecasting model with fixed hyperparameters
 
 Architecture
 ------------
-Layer 1  — Exponential recency-weighted baseline
-Layer 2B — Prophet (yearly seasonality, multiplicative) with holiday regressors
-Layer 3  — LightGBM log-residual correction
+Layer 1  — Exponential recency-weighted baseline (smooth level anchor)
+Layer 2  — Prophet (yearly seasonality, multiplicative) constrained by L1
+           via ratio clipping: y_structural = L1 * clip(prophet / L1, min, max)
+Layer 3  — LightGBM log-residual correction on remaining ratio error
 
 Model bundle saved to model.path/:
     config.json              — hyperparameters + training metadata
@@ -28,13 +29,15 @@ def train_op(
     lookback_days: int,
     half_life_days: int,
     prophet_changepoint_prior_scale: float,
+    clip_min_ratio: float,
+    clip_max_ratio: float,
     lgbm_n_estimators: int,
     lgbm_learning_rate: float,
     lgbm_num_leaves: int,
     model: Output[Model],
     metrics: Output[Metrics],
 ):
-    """Fit L1 + L2B Prophet + L3 LightGBM on the full dataset with fixed hyperparameters."""
+    """Fit L1 + L2 (Prophet constrained by L1) + L3 LightGBM on the full dataset."""
     import json
     import os
     import sys
@@ -106,6 +109,9 @@ def train_op(
             "is_holiday", "is_pre_holiday", "is_post_holiday",
             "rolling_10", "rolling_20", "rolling_30",
             "l1_baseline",
+            "prophet_yhat",
+            "raw_ratio",
+            "clipped_ratio",
             "y_structural",
         ]
 
@@ -144,8 +150,17 @@ def train_op(
         in_sample = prophet_mdl.predict(
             prophet_df[["ds", "is_holiday", "is_pre_holiday", "is_post_holiday"]]
         )
-        df["y_structural"] = in_sample["yhat"].values
-        p(f"y_structural: min={df['y_structural'].min():.2f}  max={df['y_structural'].max():.2f}")
+        df["prophet_yhat"] = in_sample["yhat"].values
+        p(f"prophet_yhat: min={df['prophet_yhat'].min():.2f}  max={df['prophet_yhat'].max():.2f}")
+
+        # L2 structural forecast: constrain Prophet via ratio clipping against L1
+        eps = 1e-9
+        df["raw_ratio"]     = df["prophet_yhat"] / (df["l1_baseline"] + eps)
+        df["clipped_ratio"] = df["raw_ratio"].clip(lower=clip_min_ratio, upper=clip_max_ratio)
+        df["y_structural"]  = df["l1_baseline"] * df["clipped_ratio"]
+        p(f"y_structural (L1 * clipped ratio): min={df['y_structural'].min():.2f}  max={df['y_structural'].max():.2f}")
+        p(f"ratio clipping [{clip_min_ratio}, {clip_max_ratio}]: "
+          f"clipped {int((df['raw_ratio'] != df['clipped_ratio']).sum())} / {int(df['raw_ratio'].notna().sum())} rows")
 
         flush_debug_to_gcs()  # checkpoint: prophet done
 
@@ -154,7 +169,7 @@ def train_op(
         train_l3 = df.dropna(subset=lgbm_features).copy()
         train_l3 = train_l3[(train_l3["y_structural"] > 0) & (train_l3["y"] > 0)].copy()
         train_l3["lgbm_target"] = np.log(
-            train_l3["y"] / train_l3["y_structural"].clip(lower=1.0)
+            train_l3["y"] / (train_l3["y_structural"] + eps)
         )
         p(f"LightGBM training rows: {len(train_l3)}")
 
@@ -213,6 +228,8 @@ def train_op(
             "lookback_days":                   lookback_days,
             "half_life_days":                  half_life_days,
             "prophet_changepoint_prior_scale": prophet_changepoint_prior_scale,
+            "clip_min_ratio":                  clip_min_ratio,
+            "clip_max_ratio":                  clip_max_ratio,
             "lgbm_n_estimators":               lgbm_n_estimators,
             "lgbm_learning_rate":              lgbm_learning_rate,
             "lgbm_num_leaves":                 lgbm_num_leaves,

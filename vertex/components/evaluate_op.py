@@ -73,6 +73,8 @@ def evaluate_op(
             cfg = json.load(f)
         lookback_days  = cfg["lookback_days"]
         half_life_days = cfg["half_life_days"]
+        clip_min_ratio = cfg["clip_min_ratio"]
+        clip_max_ratio = cfg["clip_max_ratio"]
         p(f"config: {cfg}")
 
         with open(os.path.join(model.path, "prophet_model.json")) as f:
@@ -119,8 +121,14 @@ def evaluate_op(
                 "is_pre_holiday":  fdf["is_pre_holiday"].fillna(0).values,
                 "is_post_holiday": fdf["is_post_holiday"].fillna(0).values,
             })
-            fdf["y_structural"] = prophet_mdl.predict(prophet_in)["yhat"].values
+            fdf["prophet_yhat"] = prophet_mdl.predict(prophet_in)["yhat"].values
             fdf["l1_baseline"]  = l1_val
+
+            # L2: constrain Prophet via ratio clipping against L1
+            eps = 1e-9
+            fdf["raw_ratio"]     = fdf["prophet_yhat"] / (l1_val + eps)
+            fdf["clipped_ratio"] = fdf["raw_ratio"].clip(lower=clip_min_ratio, upper=clip_max_ratio)
+            fdf["y_structural"]  = l1_val * fdf["clipped_ratio"]
 
             for win in (10, 20, 30):
                 recent = df[df["ds"] <= cutoff]["y"].tail(win)
