@@ -68,6 +68,7 @@ def load_params(params_file: Path) -> dict:
         "date_column":     date_column,
         "target_column":   data["target_column"],
         "warehouse_id":    data.get("warehouse_id", "GENNEVILLIERS"),
+        "data_start_date": data.get("data_start_date", "2023-06-01"),
         # training
         "lookback_days":                   int(train["lookback_days"]),
         "half_life_days":                  int(train["half_life_days"]),

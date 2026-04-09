@@ -46,6 +46,7 @@ def gcs_train_pipeline(
     date_column: str,
     target_column: str,
     warehouse_id: str = "GENNEVILLIERS",
+    data_start_date: str = "2023-06-01",
     # ── L1 params ────────────────────────────────────────────────────────────
     lookback_days: int = 90,
     half_life_days: int = 30,
@@ -74,6 +75,7 @@ def gcs_train_pipeline(
         date_column=date_column,
         target_column=target_column,
         warehouse_id=warehouse_id,
+        data_start_date=data_start_date,
     )
 
     # Step 3 — split: training data ends strictly before evaluation_start_date

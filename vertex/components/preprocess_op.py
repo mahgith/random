@@ -42,6 +42,7 @@ def preprocess_op(
     date_column: str,
     target_column: str,
     warehouse_id: str,
+    data_start_date: str,
     processed_data: Output[Dataset],
 ):
     """Add calendar, holiday, and rolling features to the daily time series."""
@@ -84,6 +85,14 @@ def preprocess_op(
     daily = daily.sort_values("ds").reset_index(drop=True)
     logger.info("Aggregated to %d daily rows (date range: %s – %s)",
                 len(daily), daily["ds"].min().date(), daily["ds"].max().date())
+
+    # ── Filter by data_start_date ─────────────────────────────────────────────
+    start = pd.Timestamp(data_start_date)
+    before = len(daily)
+    daily = daily[daily["ds"] >= start].reset_index(drop=True)
+    logger.info("Filtered to >= %s: kept %d / %d rows", data_start_date, len(daily), before)
+    if len(daily) == 0:
+        raise ValueError(f"No rows remain after filtering ds >= '{data_start_date}'")
 
     # ── French public holidays ────────────────────────────────────────────────
     years = daily["ds"].dt.year.unique().tolist()

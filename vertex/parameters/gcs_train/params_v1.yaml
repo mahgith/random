@@ -21,6 +21,8 @@ data:
   target_column: "nb_um_scan_arr"
   # Warehouse to filter on (column 'warehouse_id' in the CSV)
   warehouse_id: "GENNEVILLIERS"
+  # Discard all data before this date (keeps only recent, relevant history)
+  data_start_date: "2023-06-01"
 
 training:
   lookback_days:  90
