@@ -53,15 +53,33 @@ def preprocess_op(
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     logger = logging.getLogger(__name__)
 
+    _debug_log = []
+    _debug_gcs_path = "gs://csb-reg-euw3-forecast-data-dev/debug/preprocess_op_debug.txt"
+
+    def p(msg):
+        print(msg, flush=True)
+        _debug_log.append(str(msg))
+
+    def flush_debug_to_gcs():
+        try:
+            import gcsfs
+            fs = gcsfs.GCSFileSystem()
+            with fs.open(_debug_gcs_path, "w") as f:
+                f.write("\n".join(_debug_log))
+        except Exception as e:
+            print(f"[debug flush failed: {e}]", flush=True)
+
+    p("=== preprocess_op started ===")
+
     # ── Load raw data ─────────────────────────────────────────────────────────
     df = pd.read_parquet(raw_data.path + ".parquet")
-    logger.info("Loaded %d rows. Columns: %s", len(df), list(df.columns))
+    p(f"loaded {len(df)} rows | columns: {list(df.columns)}")
 
     # ── Filter by warehouse ───────────────────────────────────────────────────
     if "warehouse_id" not in df.columns:
         raise ValueError(f"Column 'warehouse_id' not found. Available: {list(df.columns)}")
     df = df[df["warehouse_id"] == warehouse_id].copy()
-    logger.info("After warehouse_id filter ('%s'): %d rows", warehouse_id, len(df))
+    p(f"after warehouse_id filter ('{warehouse_id}'): {len(df)} rows")
     if len(df) == 0:
         raise ValueError(f"No rows remain after filtering warehouse_id == '{warehouse_id}'")
 
@@ -73,42 +91,43 @@ def preprocess_op(
 
     df = df.rename(columns={date_column: "ds", target_column: "y"})
     df["ds"] = pd.to_datetime(df["ds"])
-    logger.info("Raw y stats: min=%.2f  max=%.2f  mean=%.2f  zeros=%d  nulls=%d",
-                df["y"].min(), df["y"].max(), df["y"].mean(),
-                int((df["y"] == 0).sum()), int(df["y"].isna().sum()))
-    logger.info("Raw date range: %s – %s  unique dates: %d",
-                df["ds"].min(), df["ds"].max(), df["ds"].dt.normalize().nunique())
+    p(f"raw y stats: min={df['y'].min():.2f}  max={df['y'].max():.2f}  "
+      f"mean={df['y'].mean():.2f}  zeros={int((df['y'] == 0).sum())}  "
+      f"nulls={int(df['y'].isna().sum())}")
+    p(f"raw date range: {df['ds'].min()} – {df['ds'].max()}  "
+      f"unique dates: {df['ds'].dt.normalize().nunique()}")
+    p(f"raw sample hours: {df['ds'].dt.hour.value_counts().head(5).to_dict()}")
 
     # ── 5-hour backward shift ─────────────────────────────────────────────────
     # Activity between 00:00 and 04:59 belongs to the previous business day.
     df["ds"] = df["ds"] - pd.Timedelta(hours=5)
-    logger.info("Applied -5 h shift to datetimes")
+    p("applied -5 h shift to datetimes")
 
     # ── Aggregate to daily (sum) ──────────────────────────────────────────────
     df["ds"] = df["ds"].dt.normalize()
     daily = df.groupby("ds")["y"].sum().reset_index()
     daily = daily.sort_values("ds").reset_index(drop=True)
-    logger.info("Aggregated to %d daily rows (date range: %s – %s)",
-                len(daily), daily["ds"].min().date(), daily["ds"].max().date())
-    logger.info("Daily y stats: min=%.2f  max=%.2f  mean=%.2f  zeros=%d",
-                daily["y"].min(), daily["y"].max(), daily["y"].mean(),
-                int((daily["y"] == 0).sum()))
+    p(f"aggregated to {len(daily)} daily rows "
+      f"(date range: {daily['ds'].min().date()} – {daily['ds'].max().date()})")
+    p(f"daily y stats: min={daily['y'].min():.2f}  max={daily['y'].max():.2f}  "
+      f"mean={daily['y'].mean():.2f}  zeros={int((daily['y'] == 0).sum())}")
+
+    flush_debug_to_gcs()  # checkpoint: aggregation done
 
     # ── Filter by data_start_date ─────────────────────────────────────────────
     start = pd.Timestamp(data_start_date)
     before_count = len(daily)
     daily = daily[daily["ds"] >= start].reset_index(drop=True)
-    logger.info("Filtered to >= %s: kept %d / %d rows", data_start_date, len(daily), before_count)
+    p(f"filtered to >= {data_start_date}: kept {len(daily)} / {before_count} rows")
     if len(daily) == 0:
         raise ValueError(f"No rows remain after filtering ds >= '{data_start_date}'")
 
     # ── Drop weekends (warehouse operates Mon-Fri only) ──────────────────────
     before_count = len(daily)
     daily = daily[daily["ds"].dt.dayofweek < 5].reset_index(drop=True)
-    logger.info("Dropped weekends: kept %d / %d rows", len(daily), before_count)
-    logger.info("After weekend drop: zeros=%d / %d  (%.1f%%)",
-                int((daily["y"] == 0).sum()), len(daily),
-                100 * (daily["y"] == 0).sum() / max(len(daily), 1))
+    p(f"dropped weekends: kept {len(daily)} / {before_count} rows")
+    p(f"after weekend drop: zeros={int((daily['y'] == 0).sum())} / {len(daily)}  "
+      f"({100 * (daily['y'] == 0).sum() / max(len(daily), 1):.1f}%)")
 
     # ── French public holidays ────────────────────────────────────────────────
     years = daily["ds"].dt.year.unique().tolist()
@@ -133,10 +152,9 @@ def preprocess_op(
 
     daily["is_pre_holiday"]  = daily["ds"].isin(pre_holiday_dates).astype(int)
     daily["is_post_holiday"] = daily["ds"].isin(post_holiday_dates).astype(int)
-    logger.info("Holiday flags — holidays: %d, pre: %d, post: %d",
-                int(daily["is_holiday"].sum()),
-                int(daily["is_pre_holiday"].sum()),
-                int(daily["is_post_holiday"].sum()))
+    p(f"holiday flags — holidays: {int(daily['is_holiday'].sum())}, "
+      f"pre: {int(daily['is_pre_holiday'].sum())}, "
+      f"post: {int(daily['is_post_holiday'].sum())}")
 
     # ── ISO calendar features ─────────────────────────────────────────────────
     iso = daily["ds"].dt.isocalendar()
@@ -154,6 +172,9 @@ def preprocess_op(
             workday_y.shift(1).rolling(window, min_periods=1).mean()
         )
 
-    logger.info("Preprocessing complete. Shape: %s. Columns: %s",
-                daily.shape, list(daily.columns))
+    p(f"preprocessing complete. shape: {daily.shape}  columns: {list(daily.columns)}")
+    p(f"final y stats: min={daily['y'].min():.2f}  max={daily['y'].max():.2f}  "
+      f"mean={daily['y'].mean():.2f}  zeros={int((daily['y'] == 0).sum())}")
     daily.to_parquet(processed_data.path + ".parquet", index=False)
+    p("=== preprocess_op complete ===")
+    flush_debug_to_gcs()
