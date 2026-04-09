@@ -25,16 +25,20 @@ data:
 training:
   lookback_days:  90
   half_life_days: 30
-  # L2B Prophet
+  # L2 Prophet — constrained by L1 via ratio clipping
   prophet_changepoint_prior_scale: 0.1
+  # Ratio bounds: Prophet is clamped to [clip_min_ratio, clip_max_ratio] × L1 baseline
+  clip_min_ratio: 0.1
+  clip_max_ratio: 1.8
   # L3 LightGBM
   lgbm_n_estimators:  1200
   lgbm_learning_rate: 0.05
   lgbm_num_leaves:    63
 
 evaluation:
-  forecast_horizon:      28
-  backtest_step_days:    7
-  # Start date for the rolling backtest — must be after enough history exists
-  # (needs at least lookback_days=90 days of data before this date)
+  forecast_horizon:   28
+  backtest_step_days: 7
+  # Data is split at this date: training uses strictly before, evaluation uses from here onward.
+  # Must be far enough into the dataset that training has sufficient history
+  # (at least lookback_days=90 workdays before this date).
   evaluation_start_date: "2023-07-01"
