@@ -94,6 +94,7 @@ def gcs_train_pipeline(
         clip_min_ratio=clip_min_ratio,
         clip_max_ratio=clip_max_ratio,
         l3_retrain_step_days=l3_retrain_step_days,
+        forecast_horizon=forecast_horizon,
         lgbm_n_estimators=lgbm_n_estimators,
         lgbm_learning_rate=lgbm_learning_rate,
         lgbm_num_leaves=lgbm_num_leaves,
