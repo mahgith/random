@@ -190,11 +190,11 @@ def train_op(
             return result
 
         # Need at least lookback_days of history before the first cutoff
+        forecast_horizon = 28  # fixed for L3 training data generation
         min_train_rows = max(lookback_days, 90)
         last_usable = workday_list[-forecast_horizon] if len(workday_list) > forecast_horizon else workday_list[-1]
         cutoff_candidates = workday_list[min_train_rows::l3_retrain_step_days]
         cutoffs = [c for c in cutoff_candidates if c <= last_usable]
-        forecast_horizon = 28  # fixed for L3 training data generation
 
         p(f"L3 CV: {len(cutoffs)} cutoffs, "
           f"first={cutoffs[0].date() if cutoffs else 'none'}, "
