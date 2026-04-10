@@ -55,6 +55,7 @@ def gcs_train_pipeline(
     clip_min_ratio: float = 0.1,
     clip_max_ratio: float = 1.8,
     # ── L3 LightGBM ──────────────────────────────────────────────────────────
+    l3_retrain_step_days: int = 30,
     lgbm_n_estimators: int = 1200,
     lgbm_learning_rate: float = 0.05,
     lgbm_num_leaves: int = 63,
@@ -92,6 +93,7 @@ def gcs_train_pipeline(
         prophet_changepoint_prior_scale=prophet_changepoint_prior_scale,
         clip_min_ratio=clip_min_ratio,
         clip_max_ratio=clip_max_ratio,
+        l3_retrain_step_days=l3_retrain_step_days,
         lgbm_n_estimators=lgbm_n_estimators,
         lgbm_learning_rate=lgbm_learning_rate,
         lgbm_num_leaves=lgbm_num_leaves,

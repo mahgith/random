@@ -75,6 +75,7 @@ def load_params(params_file: Path) -> dict:
         "prophet_changepoint_prior_scale": float(train["prophet_changepoint_prior_scale"]),
         "clip_min_ratio":                  float(train["clip_min_ratio"]),
         "clip_max_ratio":                  float(train["clip_max_ratio"]),
+        "l3_retrain_step_days":            int(train["l3_retrain_step_days"]),
         "lgbm_n_estimators":               int(train["lgbm_n_estimators"]),
         "lgbm_learning_rate":              float(train["lgbm_learning_rate"]),
         "lgbm_num_leaves":                 int(train["lgbm_num_leaves"]),

@@ -32,7 +32,9 @@ training:
   # Ratio bounds: Prophet is clamped to [clip_min_ratio, clip_max_ratio] × L1 baseline
   clip_min_ratio: 0.1
   clip_max_ratio: 1.8
-  # L3 LightGBM
+  # L3 LightGBM — trained on out-of-sample Prophet residuals via rolling CV
+  # Step between Prophet re-fit cutoffs (lower = more cutoffs = slower but better)
+  l3_retrain_step_days: 30
   lgbm_n_estimators:  1200
   lgbm_learning_rate: 0.05
   lgbm_num_leaves:    63
